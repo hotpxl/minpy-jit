@@ -8,8 +8,8 @@ import mxnet.ndarray as nd
 sys.path.append('../')
 from minpy import test_segment, atomic
 
-
 context = mx.cpu()
+
 
 @atomic
 def linear(X, W, bias):
@@ -71,7 +71,6 @@ def foo(h, c, patch, Wxi, Wxf, Wxo, Wxg, bxi, bxf, bxo, bxg, Whi, Whf, Who,
 
 
 foo = test_segment(foo, True)
-
 """
 for index in range(10):
     h = nd.zeros((N, D))
