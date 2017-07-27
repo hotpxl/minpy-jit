@@ -2,3 +2,9 @@
 
 Bringing just-in-time compilation to MXNet.
 
+## Development
+
+Please adhere to [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html).
+
+With [yapf](https://github.com/google/yapf) installed, run `python-format.sh` before committing to format all code.
+
