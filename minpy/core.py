@@ -178,9 +178,9 @@ def rewrite(func):
             traced_function_ast, i, j = add_type_tracing(function_ast)
             closure_parameters.extend(i)
             closure_arguments.extend(j)
-            #traced_function_ast, i, j = add_function_tracing(traced_function_ast)
-            #closure_parameters.extend(i)
-            #closure_arguments.extend(j)
+            traced_function_ast, i, j = add_function_tracing(traced_function_ast)
+            closure_parameters.extend(i)
+            closure_arguments.extend(j)
 
             new_function = evaluate_function_definition(
                 traced_function_ast, func.__globals__, closure_parameters,
