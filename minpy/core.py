@@ -158,7 +158,7 @@ def add_function_tracing(function_ast):
             closure_arguments)
 
 
-def rewrite(post_function_hook=None, function_advice=None):
+def rewrite(func):
     def wrap(func):
         global _reentrance
         if _reentrance:
@@ -167,45 +167,34 @@ def rewrite(post_function_hook=None, function_advice=None):
         source_code = inspect.getsource(func)
         function_ast = ast.parse(source_code, mode='exec')
 
-        closure_parameters = []
-        closure_arguments = []
-
-        traced_function_ast, i, j = add_type_tracing(function_ast)
-        closure_parameters.extend(i)
-        closure_arguments.extend(j)
-        # traced_function_ast, i, j = add_function_tracing(traced_function_ast)
-        # closure_parameters.extend(i)
-        # closure_arguments.extend(j)
-
-        print(pretty_print(traced_function_ast, include_attributes=False))
-        new_function = evaluate_function_definition(
-            traced_function_ast, func.__globals__, closure_parameters,
-            closure_arguments)
-
         @functools.wraps(func)
         def wrapped_func(*args, **kwargs):
             global _reentrance
             _reentrance = True
             nonlocal function_ast
-            nonlocal new_function
+            closure_parameters = []
+            closure_arguments = []
+
+            traced_function_ast, i, j = add_type_tracing(function_ast)
+            closure_parameters.extend(i)
+            closure_arguments.extend(j)
+            #traced_function_ast, i, j = add_function_tracing(traced_function_ast)
+            #closure_parameters.extend(i)
+            #closure_arguments.extend(j)
+
+            new_function = evaluate_function_definition(
+                traced_function_ast, func.__globals__, closure_parameters,
+                closure_arguments)
+
             ret = new_function(*args, **kwargs)
             print(pretty_print(function_ast, include_attributes=False))
-            # TODO: recompile AST to reflect changes
-            # if post_function_hook is not None:
-            #     new_ast = post_function_hook(function_ast)
-            #     if new_ast is not None:
-            #         function_ast = new_ast
-            #         exec(
-            #             compile(function_ast, filename='<ast>', mode='exec'),
-            #             global_namespace, local_namespace)
-            #         new_function = local_namespace[new_name]
             _reentrance = False
             return ret
 
         _reentrance = False
         return wrapped_func
 
-    return wrap
+    return wrap(func)
 
 
 def pretty_print(node,
