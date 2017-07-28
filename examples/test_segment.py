@@ -6,7 +6,7 @@ import functools
 import mxnet as mx
 import mxnet.ndarray as nd
 sys.path.append('../')
-from minpy import test_segment, atomic
+from minpy import atomic, rewrite
 
 context = mx.cpu()
 
@@ -59,6 +59,7 @@ N = 128
 X = gaussian(shape=(N, 784 // 7, 7))
 
 
+@rewrite
 def foo(h, c, patch, Wxi, Wxf, Wxo, Wxg, bxi, bxf, bxo, bxg, Whi, Whf, Who,
         Whg, bhi, bhf, bho, bhg):
     i = sigmoid(linear(patch, Wxi, bxi) + linear(h, Whi, bhi))
@@ -69,9 +70,6 @@ def foo(h, c, patch, Wxi, Wxf, Wxo, Wxg, bxi, bxf, bxo, bxg, Whi, Whf, Who,
     h = o * mx.nd.tanh(c)
     return h, c, linear(h, W, b)
 
-
-foo = test_segment(foo, True)
-"""
 for index in range(10):
     h = nd.zeros((N, D))
     c = nd.zeros((N, D))
@@ -94,4 +92,3 @@ for index in range(10):
         h = h_new
         c = c_new
         #print(time.time() - t0)
-"""
