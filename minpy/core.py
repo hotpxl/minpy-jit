@@ -178,7 +178,8 @@ def rewrite(func):
             traced_function_ast, i, j = add_type_tracing(function_ast)
             closure_parameters.extend(i)
             closure_arguments.extend(j)
-            traced_function_ast, i, j = add_function_tracing(traced_function_ast)
+            traced_function_ast, i, j = add_function_tracing(
+                traced_function_ast)
             closure_parameters.extend(i)
             closure_arguments.extend(j)
 

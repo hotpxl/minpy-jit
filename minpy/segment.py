@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from __future__ import print_function
 import ast
 import types
@@ -9,6 +11,7 @@ from functools import wraps, reduce
 from mxnet import nd
 
 
+# CR(haoran): use decorators.atomic
 def atomic(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -17,6 +20,9 @@ def atomic(f):
     return wrapper
 
 
+# CR(haoran): do not use `global_namespace`. real function object is
+# annotated on AST (attribute `.ref`). try `'__minpy_atomic' in
+# ast_node.ref.__dict__`
 def segment(node, global_namespace, visualize_mode=False):
     """Given an annotated AST, return a segmented AST
 
@@ -36,12 +42,16 @@ def segment(node, global_namespace, visualize_mode=False):
 
     """
 
+    # CR(haoran): this is unnecessary. 1. if you feel you must use a
+    # separate function, use it as a free function; 2. use
+    # `isinstance` instead of `type ==`.
     def is_ndarray_type(x):
         return x.type == nd.NDArray
 
     return do_segment(node, global_namespace, is_ndarray_type, visualize_mode)
 
 
+# CR(haoran): this could be deleted.
 def test_segment(f, visualize_mode=False):
     """The function to test segment implementation
 
@@ -65,7 +75,7 @@ def test_segment(f, visualize_mode=False):
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
     global_namespace = f.__globals__.copy()
-    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
+    exec(compile(node, filename='<ast>', mode='exec'), global_namespace)
 
     def wrapper(*args, **kwargs):
         return global_namespace[func_name](*args, **kwargs)
@@ -170,9 +180,10 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             if isinstance(node, AstTypeHelper.non_check_list):
                 return True
 
-            raise TypeError('Type {} not handled yet in fuse check'.format(
-                type(node)))
+            raise TypeError(
+                'Type {} not handled yet in fuse check'.format(type(node)))
 
+    # CR(haoran): same as cr on line 23
     def is_atomic_func(node):
         # TODO: add a cache here
         if (isinstance(node.func, ast.Attribute)):
@@ -208,10 +219,10 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
 
         nonlocal segment_id
         # Do nothing on unit op
-        if (isinstance(node, AstTypeHelper.skip_fuse_list)):
+        if isinstance(node, AstTypeHelper.skip_fuse_list):
             return node
 
-        if (visualize_mode):
+        if visualize_mode:
             print('Segment {} info: '.format(segment_id))
             segment_id += 1
             ins, outs = infer_inputs_and_outputs_given_nodes(node)
@@ -372,6 +383,7 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         if isinstance(expr, list):
             return list(
                 OrderedDict.fromkeys(
+                    # CR(haoran): use function `sum`?
                     reduce(lambda x, y: x + y,
                            [infer_inputs_given_exprs(e) for e in expr])))
         elif isinstance(expr, ast.Call):
@@ -382,21 +394,25 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             return infer_inputs_given_exprs(expr.operand)
         elif isinstance(expr, ast.Tuple):
             return infer_inputs_given_exprs(expr.elts)
+        # CR(haoran): it would be more convenient to handle nested
+        # attributes/subscripts as a whole. for example,
+        # `nd.random.normal` would be treated as one single input,
+        # same for `array[2][3][4]`.
         elif isinstance(expr, ast.Attribute):
             # Assumption: left operand is a Name
-            assert (isinstance(expr.expr, ast.Name))
+            assert isinstance(expr.expr, ast.Name)
             return [expr.expr.id + "." + expr.attr]
         elif isinstance(expr, ast.Subscript):
             # Assumption: left operand is a Name
-            assert (isinstance(expr.expr, ast.Name))
+            assert isinstance(expr.expr, ast.Name)
             return [expr.expr.id + "_subscript_"]
         elif isinstance(expr, ast.Name):
             return [expr.id]
         elif isinstance(expr, (ast.Num, ast.Str, ast.Bytes)):
             return []
 
-        raise TypeError('{} not handled yet in inference of inputs'.format(
-            type(expr)))
+        raise TypeError(
+            '{} not handled yet in inference of inputs'.format(type(expr)))
 
     if isinstance(nodes, list):
         ins = []
@@ -405,6 +421,7 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             sub_ins, sub_outs = infer_inputs_and_outputs_given_node(node)
             ins += [x for x in sub_ins if x not in outs]
             outs += sub_outs
+        # CR(haoran): use `set` instead of `OrderedDict`?
         return list(OrderedDict.fromkeys(ins)), list(
             OrderedDict.fromkeys(outs))
     else:
