@@ -159,43 +159,39 @@ def add_function_tracing(function_ast):
 
 
 def rewrite(func):
-    def wrap(func):
+    global _reentrance
+    if _reentrance:
+        return func
+    _reentrance = True
+    source_code = inspect.getsource(func)
+    function_ast = ast.parse(source_code, mode='exec')
+
+    @functools.wraps(func)
+    def wrapped_func(*args, **kwargs):
         global _reentrance
-        if _reentrance:
-            return func
         _reentrance = True
-        source_code = inspect.getsource(func)
-        function_ast = ast.parse(source_code, mode='exec')
+        nonlocal function_ast
+        closure_parameters = []
+        closure_arguments = []
 
-        @functools.wraps(func)
-        def wrapped_func(*args, **kwargs):
-            global _reentrance
-            _reentrance = True
-            nonlocal function_ast
-            closure_parameters = []
-            closure_arguments = []
+        traced_function_ast, i, j = add_type_tracing(function_ast)
+        closure_parameters.extend(i)
+        closure_arguments.extend(j)
+        traced_function_ast, i, j = add_function_tracing(traced_function_ast)
+        closure_parameters.extend(i)
+        closure_arguments.extend(j)
 
-            traced_function_ast, i, j = add_type_tracing(function_ast)
-            closure_parameters.extend(i)
-            closure_arguments.extend(j)
-            traced_function_ast, i, j = add_function_tracing(
-                traced_function_ast)
-            closure_parameters.extend(i)
-            closure_arguments.extend(j)
+        new_function = evaluate_function_definition(
+            traced_function_ast, func.__globals__, closure_parameters,
+            closure_arguments)
 
-            new_function = evaluate_function_definition(
-                traced_function_ast, func.__globals__, closure_parameters,
-                closure_arguments)
-
-            ret = new_function(*args, **kwargs)
-            print(pretty_print(function_ast, include_attributes=False))
-            _reentrance = False
-            return ret
-
+        ret = new_function(*args, **kwargs)
+        print(pretty_print(function_ast, include_attributes=False))
         _reentrance = False
-        return wrapped_func
+        return ret
 
-    return wrap(func)
+    _reentrance = False
+    return wrapped_func
 
 
 def pretty_print(node,
