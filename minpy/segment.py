@@ -175,6 +175,9 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                 return is_atomic_func(node)
 
             if isinstance(node, AstTypeHelper.type_checking_list):
+                # CR(haoran): it is possible that a node has no type
+                # information. This happens because the code path has
+                # not been run
                 return is_ndarray_type(node)
 
             if isinstance(node, AstTypeHelper.non_check_list):
