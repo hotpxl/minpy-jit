@@ -6,7 +6,7 @@ import functools
 import mxnet as mx
 import mxnet.ndarray as nd
 sys.path.append('../')
-from minpy import atomic, rewrite
+from minpy import atomic, jit
 
 context = mx.cpu()
 
@@ -59,7 +59,7 @@ N = 128
 X = gaussian(shape=(N, 784 // 7, 7))
 
 
-@rewrite
+@jit
 def foo(h, c, patch, Wxi, Wxf, Wxo, Wxg, bxi, bxf, bxo, bxg, Whi, Whf, Who,
         Whg, bhi, bhf, bho, bhg):
     i = sigmoid(linear(patch, Wxi, bxi) + linear(h, Whi, bhi))
