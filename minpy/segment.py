@@ -11,19 +11,7 @@ from functools import wraps, reduce
 from mxnet import nd
 
 
-# CR(haoran): use decorators.atomic
-def atomic(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        return wrapper
-
-    return wrapper
-
-
-# CR(haoran): do not use `global_namespace`. real function object is
-# annotated on AST (attribute `.ref`). try `'__minpy_atomic' in
-# ast_node.ref.__dict__`
-def segment(node, global_namespace, visualize_mode=False):
+def segment(node, visualize_mode=False):
     """Given an annotated AST, return a segmented AST
 
     This is the only interface to call after type annotation.
@@ -31,10 +19,7 @@ def segment(node, global_namespace, visualize_mode=False):
     ----------
     node: annotated AST node
 
-    global_namespace: globa NameSpace of the function
-
     visualize_mode: print the segments if True
-
 
     Returns
     -------
@@ -43,15 +28,18 @@ def segment(node, global_namespace, visualize_mode=False):
     """
 
     # CR(haoran): this is unnecessary. 1. if you feel you must use a
-    # separate function, use it as a free function; 2. use
-    # `isinstance` instead of `type ==`.
+    # separate function, use it as a free function;
+    # XCR(yutian): 1. The main reason is to make do_segment interface
+    # compatiable for test_segment where no type information is given.
+    # I could change this once the test_segment is no longer needed
     def is_ndarray_type(x):
-        return x.type == nd.NDArray
+        return isinstance(x, nd.NDArray)
 
-    return do_segment(node, global_namespace, is_ndarray_type, visualize_mode)
+    return do_segment(node, None, is_ndarray_type, visualize_mode)
 
 
 # CR(haoran): this could be deleted.
+# XCR(yutian): it's for testing purpose. Let's delete or move this func to unit-test later
 def test_segment(f, visualize_mode=False):
     """The function to test segment implementation
 
@@ -75,7 +63,7 @@ def test_segment(f, visualize_mode=False):
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
     global_namespace = f.__globals__.copy()
-    exec(compile(node, filename='<ast>', mode='exec'), global_namespace)
+    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
 
     def wrapper(*args, **kwargs):
         return global_namespace[func_name](*args, **kwargs)
@@ -136,8 +124,6 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             ast.Continue,
             ast.Str)
 
-        func_checking_list = (ast.Call)
-
         # Check its or the computed result's type
         type_checking_list = (ast.Name, ast.BinOp, ast.UnaryOp, ast.Compare,
                               ast.BoolOp, ast.Attribute, ast.Subscript)
@@ -171,7 +157,7 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             if isinstance(node, AstTypeHelper.seg_list):
                 return False
 
-            if isinstance(node, AstTypeHelper.func_checking_list):
+            if isinstance(node, ast.Call):
                 return is_atomic_func(node)
 
             if isinstance(node, AstTypeHelper.type_checking_list):
@@ -183,23 +169,14 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             if isinstance(node, AstTypeHelper.non_check_list):
                 return True
 
-            raise TypeError(
-                'Type {} not handled yet in fuse check'.format(type(node)))
+            raise TypeError('Type {} not handled yet in fuse check'.format(
+                type(node)))
 
-    # CR(haoran): same as cr on line 23
     def is_atomic_func(node):
-        # TODO: add a cache here
-        if (isinstance(node.func, ast.Attribute)):
-            # return node.type == NDArray Type
-            return True
-
+        # TODO: handle class method call, which is invalid to getsource
         try:
-            f = global_namespace[node.func.id]
-            assert (isinstance(f, types.FunctionType))
-            func_def = ast.parse(inspect.getsource(f))
-            for e in func_def.body[0].decorator_list:
-                if (global_namespace[e.id] == atomic):
-                    return True
+            if node.ref.__dict__['__minpy_atomic']:
+                return True
         except Exception:
             # f is a built-in func or f is not a funct
             print('is_atomic_func fails', type(node))
@@ -244,7 +221,7 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
     def get_consec_assign(values, signs):
         pos, leng = (0, 0)
         while pos < len(values):
-            if (isinstance(values[pos], ast.Assign)):
+            if isinstance(values[pos], ast.Assign):
                 leng += 1
             else:
                 if leng > 0:
@@ -279,11 +256,11 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             elif isinstance(value, list):
                 atom_signs[name] = []
                 for i, e in enumerate(value):
-                    if (isinstance(e, ast.AST)):
+                    if isinstance(e, ast.AST):
                         atom_signs[name].append(iterate_and_fuse(e))
                         all_atom &= atom_signs[name][i]
 
-        if (all_atom):
+        if all_atom:
             all_atom &= AstTypeHelper.fuse_check(node)
 
         # If all child nodes are atomic and the operation itself is good, then
@@ -323,7 +300,7 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                 value[:] = new_values
         return False
 
-    if (iterate_and_fuse(node)):
+    if iterate_and_fuse(node):
         node = fuse(node)
     return node
 
@@ -384,11 +361,14 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             - if it's module or class, then return []
         """
         if isinstance(expr, list):
-            return list(
-                OrderedDict.fromkeys(
-                    # CR(haoran): use function `sum`?
+            # CR(haoran): use function `sum`?
+            # XCR(yutian): `sum` starts with 0. It would fail when an int adds to a list
+            return [
+                e
+                for e in set(
                     reduce(lambda x, y: x + y,
-                           [infer_inputs_given_exprs(e) for e in expr])))
+                           [infer_inputs_given_exprs(e) for e in expr]))
+            ]
         elif isinstance(expr, ast.Call):
             return infer_inputs_given_exprs(expr.args)
         elif isinstance(expr, ast.BinOp):
@@ -414,8 +394,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(expr, (ast.Num, ast.Str, ast.Bytes)):
             return []
 
-        raise TypeError(
-            '{} not handled yet in inference of inputs'.format(type(expr)))
+        raise TypeError('{} not handled yet in inference of inputs'.format(
+            type(expr)))
 
     if isinstance(nodes, list):
         ins = []
@@ -424,8 +404,6 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             sub_ins, sub_outs = infer_inputs_and_outputs_given_node(node)
             ins += [x for x in sub_ins if x not in outs]
             outs += sub_outs
-        # CR(haoran): use `set` instead of `OrderedDict`?
-        return list(OrderedDict.fromkeys(ins)), list(
-            OrderedDict.fromkeys(outs))
+        return [e for e in (set(ins))], [e for e in set(outs)]
     else:
         return infer_inputs_and_outputs_given_node(nodes)
