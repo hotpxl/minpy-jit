@@ -10,6 +10,8 @@ from functools import wraps, reduce
 
 from mxnet import nd
 
+segment_cnt = 0
+
 
 def segment(node, visualize_mode=False):
     """Given an annotated AST, return a segmented AST
@@ -32,8 +34,8 @@ def segment(node, visualize_mode=False):
     # XCR(yutian): 1. The main reason is to make do_segment interface
     # compatiable for test_segment where no type information is given.
     # I could change this once the test_segment is no longer needed
-    def is_ndarray_type(x):
-        return isinstance(x, nd.NDArray)
+    def is_ndarray_type(node):
+        return hasattr(node, 'type') and isinstance(node.type, nd.NDArray)
 
     return do_segment(node, None, is_ndarray_type, visualize_mode)
 
@@ -154,6 +156,9 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
 
         @staticmethod
         def fuse_check(node):
+            if getattr(node, 'fused', False):
+                return False
+
             if isinstance(node, AstTypeHelper.seg_list):
                 return False
 
@@ -164,6 +169,7 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                 # CR(haoran): it is possible that a node has no type
                 # information. This happens because the code path has
                 # not been run
+                # XCR(yutian): handled
                 return is_ndarray_type(node)
 
             if isinstance(node, AstTypeHelper.non_check_list):
@@ -179,8 +185,6 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             print('is_atomic_func fails', type(node))
             return False
 
-    segment_id = 0
-
     def fuse(node):
         """Fuse the node or the list of nodes
 
@@ -191,15 +195,14 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
         The expression could be re-writen to 'run_segment(inputs)'
         The assignment statement should kept its outputs  'outputs = run_segments(inputs)'
         """
-
-        nonlocal segment_id
         # Do nothing on unit op
         if isinstance(node, AstTypeHelper.skip_fuse_list):
             return node
 
+        global segment_cnt
         if visualize_mode:
-            print('Segment {} info: '.format(segment_id))
-            segment_id += 1
+            print('Segment {} info: '.format(segment_cnt))
+            segment_cnt += 1
             ins, outs = infer_inputs_and_outputs_given_nodes(node)
             print('\tinput list: ', ins)
             print('\toutput list: ', outs)
@@ -210,13 +213,20 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                 print('\tast node 0 ', node)
             print('\n')
 
-        # TODO: Add aggregation code here
+        # Mark the node as fused
+        if isinstance(node, list):
+            for e in node:
+                e.fused = True
+        else:
+            node.fused = True
+
+        # TODO: Rewrite the node
         return node
 
     def get_consec_assign(values, signs):
         pos, leng = (0, 0)
         while pos < len(values):
-            if isinstance(values[pos], ast.Assign):
+            if isinstance(values[pos], ast.Assign) and signs[pos]:
                 leng += 1
             else:
                 if leng > 0:
@@ -242,6 +252,9 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             True, if all the children nodes can be fused. And fusion is done by some of its ancestor nodes
             False, otherwise
         """
+        if getattr(node, 'fused', False):
+            return False
+
         atom_signs = {}
         all_atom = True
         for name, value in ast.iter_fields(node):
