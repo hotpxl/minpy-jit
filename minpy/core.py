@@ -158,7 +158,7 @@ def add_function_tracing(function_ast):
             closure_arguments)
 
 
-def rewrite(func):
+def jit(func):
     global _reentrance
     if _reentrance:
         return func
