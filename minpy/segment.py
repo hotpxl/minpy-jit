@@ -173,16 +173,11 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                 type(node)))
 
     def is_atomic_func(node):
-        # TODO: handle class method call, which is invalid to getsource
         try:
-            if node.ref.__dict__['__minpy_atomic']:
-                return True
+            return node.ref.__dict__['__minpy_atomic']
         except Exception:
-            # f is a built-in func or f is not a funct
             print('is_atomic_func fails', type(node))
             return False
-        print('is_atomic_func fails', type(node))
-        return False
 
     segment_id = 0
 
