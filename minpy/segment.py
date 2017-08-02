@@ -10,6 +10,7 @@ from functools import wraps, reduce
 
 from mxnet import nd
 
+# CR(haoran): prepend underscore to indicate it's private
 segment_cnt = 0
 
 
@@ -29,11 +30,6 @@ def segment(node, visualize_mode=False):
 
     """
 
-    # CR(haoran): this is unnecessary. 1. if you feel you must use a
-    # separate function, use it as a free function;
-    # XCR(yutian): 1. The main reason is to make do_segment interface
-    # compatiable for test_segment where no type information is given.
-    # I could change this once the test_segment is no longer needed
     def is_ndarray_type(node):
         return hasattr(node, 'type') and isinstance(node.type, nd.NDArray)
 
@@ -42,6 +38,9 @@ def segment(node, visualize_mode=False):
 
 # CR(haoran): this could be deleted.
 # XCR(yutian): it's for testing purpose. Let's delete or move this func to unit-test later
+# XCR(haoran): better write unit test where you pass in a annotated
+# AST, instead of passing in a function that pretends the tree is
+# annotated
 def test_segment(f, visualize_mode=False):
     """The function to test segment implementation
 
@@ -65,7 +64,7 @@ def test_segment(f, visualize_mode=False):
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
     global_namespace = f.__globals__.copy()
-    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
+    exec(compile(node, filename='<ast>', mode='exec'), global_namespace)
 
     def wrapper(*args, **kwargs):
         return global_namespace[func_name](*args, **kwargs)
@@ -73,6 +72,7 @@ def test_segment(f, visualize_mode=False):
     return wrapper
 
 
+#CR(haoran): `global_namespace` is not used.
 def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
     """Segment a node given its information collected in the runtime
 
@@ -93,6 +93,9 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
 
     class AstTypeHelper:
         """The helper class that categorizes the AST classes by purposes"""
+        # CR(haoran): is it better to change the name of the lists to
+        # "always_fused_types, never_fused_types, maybe_fused_types"
+        # or something alike to indicate its semantic meaning
         seg_list = (
             # Module, Function, Class Related
             ast.Module,
@@ -154,6 +157,9 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
 
         skip_fuse_list = (ast.arg, ast.Name)
 
+        # CR(haoran): do you mean `classmethod` so the signature is
+        # `def fuse_check(cls, node)` and in the body you can use
+        # `cls` instead of `AstTypeHelper`
         @staticmethod
         def fuse_check(node):
             if getattr(node, 'fused', False):
@@ -166,19 +172,20 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                 return is_atomic_func(node)
 
             if isinstance(node, AstTypeHelper.type_checking_list):
-                # CR(haoran): it is possible that a node has no type
-                # information. This happens because the code path has
-                # not been run
-                # XCR(yutian): handled
                 return is_ndarray_type(node)
 
             if isinstance(node, AstTypeHelper.non_check_list):
                 return True
 
-            raise TypeError('Type {} not handled yet in fuse check'.format(
-                type(node)))
+            # CR(haoran): use `type(node).__name__` instead of
+            # `type(node)` to print readably
+            raise TypeError(
+                'Type {} not handled yet in fuse check'.format(type(node)))
 
     def is_atomic_func(node):
+        # CR(haoran): wild-card catching is dangerous. use `get`
+        # for example
+        # return node.ref.__dict__.get('__minpy_atomic', False)
         try:
             return node.ref.__dict__['__minpy_atomic']
         except Exception:
@@ -223,6 +230,8 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
         # TODO: Rewrite the node
         return node
 
+    # CR(haoran): refrain from using abbreviations. get a
+    # autocompletion plugin instead
     def get_consec_assign(values, signs):
         pos, leng = (0, 0)
         while pos < len(values):
@@ -257,6 +266,9 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
 
         atom_signs = {}
         all_atom = True
+        # CR(haoran): use iter_child_nodes so you don't have to check
+        # whether it's a list
+        # (https://github.com/python/cpython/blob/3.6/Lib/ast.py#L178)
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
                 atom_signs[name] = iterate_and_fuse(value)
@@ -295,6 +307,14 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
                     for i in range(st, st + leng):
                         signs[i] = False
 
+        # CR(haoran): seems you are compiling atomic functions
+        # individually. Consider this case:
+        #
+        # a = a + 1 assignment
+        # atomic_fn(a) atomic call
+        # a = a + 1 assignment
+        #
+        # Would you be able to fuse all three together?
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST) and (atom_signs[name]):
                 new_value = fuse(value)
@@ -371,6 +391,11 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         if isinstance(expr, list):
             # CR(haoran): use function `sum`?
             # XCR(yutian): `sum` starts with 0. It would fail when an int adds to a list
+            # XCR(haoran): https://docs.python.org/3/library/functions.html#sum
+            # sum takes an additional argument
+            # try     set(sum(map(infer_inputs_given_exprs, expr), []))
+            # also I don't think it's better to return `set` because
+            # the semantics requires no duplication
             return [
                 e
                 for e in set(
@@ -402,8 +427,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(expr, (ast.Num, ast.Str, ast.Bytes)):
             return []
 
-        raise TypeError('{} not handled yet in inference of inputs'.format(
-            type(expr)))
+        raise TypeError(
+            '{} not handled yet in inference of inputs'.format(type(expr)))
 
     if isinstance(nodes, list):
         ins = []
