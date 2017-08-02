@@ -65,7 +65,7 @@ def test_segment(f, visualize_mode=False):
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
     global_namespace = f.__globals__.copy()
-    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
+    exec(compile(node, filename='<ast>', mode='exec'), global_namespace)
 
     def wrapper(*args, **kwargs):
         return global_namespace[func_name](*args, **kwargs)
@@ -175,8 +175,8 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             if isinstance(node, AstTypeHelper.non_check_list):
                 return True
 
-            raise TypeError('Type {} not handled yet in fuse check'.format(
-                type(node)))
+            raise TypeError(
+                'Type {} not handled yet in fuse check'.format(type(node)))
 
     def is_atomic_func(node):
         try:
@@ -402,8 +402,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(expr, (ast.Num, ast.Str, ast.Bytes)):
             return []
 
-        raise TypeError('{} not handled yet in inference of inputs'.format(
-            type(expr)))
+        raise TypeError(
+            '{} not handled yet in inference of inputs'.format(type(expr)))
 
     if isinstance(nodes, list):
         ins = []

@@ -70,6 +70,7 @@ def foo(h, c, patch, Wxi, Wxf, Wxo, Wxg, bxi, bxf, bxo, bxg, Whi, Whf, Who,
     h = o * mx.nd.tanh(c)
     return h, c, linear(h, W, b)
 
+
 for index in range(10):
     h = nd.zeros((N, D))
     c = nd.zeros((N, D))

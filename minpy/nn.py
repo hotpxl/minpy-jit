@@ -12,6 +12,23 @@ class Module:
         super().__setattr__('_modules', set())
         super().__setattr__('_parameters', set())
 
+    # CR(gaiyu): To my understanding, you are depending on inheritance
+    # to make sure `compile` gets called. And `compile` takes a class
+    # and turns the forward method into a jittable free function. It
+    # would not work if either the user did not inherit from Module or
+    # the user did not call the function forward. To make it more
+    # general, I suggest you provide a decorator that lifts the method
+    # to a free function. So the user can annotate whatever function
+    # they want, and don't have to worry about inheritance.
+    #
+    # Something like this:
+    # def decorator(func):
+    #     get source
+    #     dedent func
+    #     compile func (common code)
+    #     def wrapped_fn(*args, **kwargs):
+    #         return compiled_fn(*args, **kwargs)
+    #     return wrapped_fn
     def __setattr__(self, attr, value):
         assert attr not in self._modules and \
           attr not in self._parameters
@@ -38,13 +55,18 @@ class Module:
 
         Parameters
         ----------
-        
+
         """
         raise NotImplementedError()
 
     def compile(self):
         """ Convert `self.forward` to static function and segment the converted function.
         """
+        # CR(gaiyu): the main logic here is:
+        # 1. get source code
+        # 2. pre processing (dedent)
+        # 3. compile
+        # At least part 3 you can use common code. Or I can hook that up later.
         source = inspect.getsource(self.forward)
         source = textwrap.dedent(source)
         node = ast.parse(source)
@@ -106,7 +128,7 @@ class Module:
         always_true = lambda _: True
         node = do_segment(node, always_true, always_true, True)
         '''
-        exec (compile(node, 'ast', 'exec'), namespace)
+        exec(compile(node, 'ast', 'exec'), namespace)
         self.__class__.__call__ = staticmethod(namespace['forward'])
         return namespace['forward']
 
