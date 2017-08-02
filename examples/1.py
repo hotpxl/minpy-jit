@@ -6,7 +6,7 @@ import numpy as np
 import minpy
 
 
-@minpy.rewrite
+@minpy.jit
 def user_func():
     a = np.random.normal(size=(3, 3))
     b = a + 3
