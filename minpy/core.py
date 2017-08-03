@@ -9,6 +9,8 @@ import types
 import inspect
 import functools
 
+from . import segment
+
 _reentrance = False
 
 
@@ -187,6 +189,7 @@ def jit(func):
 
         ret = new_function(*args, **kwargs)
         print(pretty_print(function_ast, include_attributes=False))
+        #print(pretty_print(segment.segment(function_ast, True)))
         _reentrance = False
         return ret
 

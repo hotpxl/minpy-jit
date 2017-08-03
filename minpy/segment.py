@@ -367,6 +367,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(node, ast.expr):
             return infer_inputs_given_exprs(node), []
         else:
+            # CR(haoran): ast.Store not handled? make sure common
+            # attributes are dealt with
             raise TypeError(
                 'Type {} not handled yet in inputs and outputs inference'.
                 format(type(node)))
