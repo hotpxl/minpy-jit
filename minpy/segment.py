@@ -14,7 +14,7 @@ from mxnet import nd
 segment_cnt = 0
 
 
-def segment(node, visualize_mode=False):
+def segment(node, print_segment=False):
     """Given an annotated AST, return a segmented AST
 
     This is the only interface to call after type annotation.
@@ -22,7 +22,7 @@ def segment(node, visualize_mode=False):
     ----------
     node: annotated AST node
 
-    visualize_mode: print the segments if True
+    print_segment: print new segments if True
 
     Returns
     -------
@@ -33,7 +33,7 @@ def segment(node, visualize_mode=False):
     def is_ndarray_type(node):
         return hasattr(node, 'type') and isinstance(node.type, nd.NDArray)
 
-    return do_segment(node, None, is_ndarray_type, visualize_mode)
+    return do_segment(node, None, is_ndarray_type, print_segment)
 
 
 # CR(haoran): this could be deleted.
@@ -41,7 +41,7 @@ def segment(node, visualize_mode=False):
 # XCR(haoran): better write unit test where you pass in a annotated
 # AST, instead of passing in a function that pretends the tree is
 # annotated
-def test_segment(f, visualize_mode=False):
+def test_segment(f, print_segment=False):
     """The function to test segment implementation
 
     The interface to test segment function without the annotation information
@@ -51,7 +51,7 @@ def test_segment(f, visualize_mode=False):
     ----------
     f: function to segment
 
-    visualize_mode: print the segments if True
+    print_segment: print new segments if True
     """
 
     def is_ndarray_type_fake(x):
@@ -59,12 +59,12 @@ def test_segment(f, visualize_mode=False):
         return True
 
     node = ast.parse(inspect.getsource(f))
-    node = do_segment(node, f.__globals__, is_ndarray_type_fake,
-                      visualize_mode)
+    node = do_segment(node, f.__globals__, is_ndarray_type_fake, print_segment)
+    ast.fix_missing_locations(node)
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
     global_namespace = f.__globals__.copy()
-    exec(compile(node, filename='<ast>', mode='exec'), global_namespace)
+    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
 
     def wrapper(*args, **kwargs):
         return global_namespace[func_name](*args, **kwargs)
@@ -73,7 +73,7 @@ def test_segment(f, visualize_mode=False):
 
 
 #CR(haoran): `global_namespace` is not used.
-def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
+def do_segment(node, global_namespace, is_ndarray_type, print_segment):
     """Segment a node given its information collected in the runtime
 
     Parameters
@@ -155,7 +155,8 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             # arg
             ast.arg)
 
-        skip_fuse_list = (ast.arg, ast.Name)
+        # TODO: handle fuse of expression
+        skip_fuse_list = (ast.arg, ast.Name, ast.expr)
 
         # CR(haoran): do you mean `classmethod` so the signature is
         # `def fuse_check(cls, node)` and in the body you can use
@@ -179,56 +180,93 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
 
             # CR(haoran): use `type(node).__name__` instead of
             # `type(node)` to print readably
-            raise TypeError(
-                'Type {} not handled yet in fuse check'.format(type(node)))
+            raise TypeError('Type {} not handled yet in fuse check'.format(
+                type(node)))
 
     def is_atomic_func(node):
         # CR(haoran): wild-card catching is dangerous. use `get`
         # for example
         # return node.ref.__dict__.get('__minpy_atomic', False)
+        return True
         try:
             return node.ref.__dict__['__minpy_atomic']
         except Exception:
             print('is_atomic_func fails', type(node))
             return False
 
-    def fuse(node):
+    def make_fuse_func_def(func_name, statements, ins, outs):
+        return ast.FunctionDef(
+            name=func_name,
+            args=ast.arguments(
+                args=[ast.arg(arg=e, annotation=None) for e in ins],
+                vararg=None,
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[]),
+            body=[
+                *statements, ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(
+                        id=e, ctx=ast.Load()) for e in outs],
+                    ctx=ast.Load()))
+            ],
+            decorator_list=[],
+            returns=None)
+
+    def make_call(func_name, ins, outs):
+        return ast.Assign(
+            targets=[
+                ast.Tuple(
+                    elts=[ast.Name(
+                        id=e, ctx=ast.Store()) for e in outs],
+                    ctx=ast.Store())
+            ],
+            value=ast.Call(
+                func=ast.Name(
+                    id=func_name, ctx=ast.Load()),
+                args=[ast.Name(
+                    id=e, ctx=ast.Load()) for e in ins],
+                keywords=[]))
+
+    new_funcdefs = []
+
+    def fuse(nodes):
         """Fuse the node or the list of nodes
 
         Parameters
         ------
-        node:  ast.Ast  | the list of ast.Ast
+        nodes:  the list of ast nodes
 
         The expression could be re-writen to 'run_segment(inputs)'
         The assignment statement should kept its outputs  'outputs = run_segments(inputs)'
         """
         # Do nothing on unit op
-        if isinstance(node, AstTypeHelper.skip_fuse_list):
-            return node
+        if len(nodes) == 1 and isinstance(nodes[0],
+                                          AstTypeHelper.skip_fuse_list):
+            return nodes[0]
+
+        ins, outs = infer_inputs_and_outputs_given_nodes(nodes)
 
         global segment_cnt
-        if visualize_mode:
+        func_name = '_fuse_func_{}'.format(segment_cnt)
+        if print_segment:
             print('Segment {} info: '.format(segment_cnt))
-            segment_cnt += 1
-            ins, outs = infer_inputs_and_outputs_given_nodes(node)
             print('\tinput list: ', ins)
             print('\toutput list: ', outs)
-            if isinstance(node, list):
-                for i, e in enumerate(node):
-                    print('\tast node {} '.format(i), e)
-            else:
-                print('\tast node 0 ', node)
+            for i, e in enumerate(nodes):
+                print('\tast node {} '.format(i), e)
             print('\n')
+        segment_cnt += 1
 
         # Mark the node as fused
-        if isinstance(node, list):
-            for e in node:
-                e.fused = True
-        else:
-            node.fused = True
+        for e in nodes:
+            e.fused = True
 
-        # TODO: Rewrite the node
-        return node
+        # TODO: handle subscript and attribute opertion
+        func_def = make_fuse_func_def(func_name, nodes, ins, outs)
+        call_node = make_call(func_name, ins, outs)
+        new_funcdefs.append(func_def)
+        return call_node
 
     # CR(haoran): refrain from using abbreviations. get a
     # autocompletion plugin instead
@@ -294,18 +332,12 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
             signs = atom_signs['body']
             removed_num = 0
             for (st, leng) in get_consec_assign(values, signs):
-                if not visualize_mode:
-                    st -= removed_num
-                    values[st] = fuse(values[st:st + leng])
-                    # Already being fused
-                    signs[st] = False
-                    removed_num += leng - 1
-                    del values[st + 1:st + leng - 1]
-                    del signs[st + 1:st + leng - 1]
-                else:
-                    fuse(values[st:st + leng])
-                    for i in range(st, st + leng):
-                        signs[i] = False
+                st -= removed_num
+                values[st] = fuse(values[st:st + leng])
+                signs[st] = False
+                removed_num += leng - 1
+                del values[st + 1:st + leng - 1]
+                del signs[st + 1:st + leng - 1]
 
         # CR(haoran): seems you are compiling atomic functions
         # individually. Consider this case:
@@ -317,19 +349,21 @@ def do_segment(node, global_namespace, is_ndarray_type, visualize_mode):
         # Would you be able to fuse all three together?
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST) and (atom_signs[name]):
-                new_value = fuse(value)
+                new_value = fuse([value])
                 setattr(node, name, new_value)
             elif isinstance(value, list):
                 new_values = []
                 for i, e in enumerate(value):
                     if isinstance(e, ast.AST) and atom_signs[name][i]:
-                        e = fuse(e)
+                        e = fuse([e])
                     new_values.append(e)
                 value[:] = new_values
         return False
 
     if iterate_and_fuse(node):
-        node = fuse(node)
+        node = fuse([node])
+    # Insert new fuse function definitions to function body
+    node.body[0].body[0:0] = new_funcdefs
     return node
 
 
@@ -429,8 +463,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(expr, (ast.Num, ast.Str, ast.Bytes)):
             return []
 
-        raise TypeError(
-            '{} not handled yet in inference of inputs'.format(type(expr)))
+        raise TypeError('{} not handled yet in inference of inputs'.format(
+            type(expr)))
 
     if isinstance(nodes, list):
         ins = []
