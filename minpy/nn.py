@@ -29,6 +29,31 @@ class Module:
     #     def wrapped_fn(*args, **kwargs):
     #         return compiled_fn(*args, **kwargs)
     #     return wrapped_fn
+    #
+    # XCR(yutian): I am not sure whether it is feasible to lift a bound method
+    # to free function via a decorator. For example:
+    # 
+    # def decorator(f):
+    #     ...
+    #
+    # class C:
+    #     @decorator
+    #     def wrapped_method(self):
+    #         return self.attr
+    #
+    # When received by `decorator`, `wrapped_method` is actually "free", meaning that
+    # it does not contain any reference to `self`. However, in order to lift a bound method,
+    # I must be able to access `self` and put references to all attributes of `self`
+    # that are used in `wrapped_method` in an auxiliary namespace. In pseudocode:
+    #
+    # namespace = {}
+    # used_attrs = search_for_used_attrs_via_ast(f)
+    # for attr in used_attrs:
+    #     namespace[attr] = getattr(self, attr) # `self` is unavailable!
+    # compile_in_namespace(f, namespace)
+    #
+    # But I think it is possible to remove the constraint that only `forward` can be lifted.
+
     def __setattr__(self, attr, value):
         assert attr not in self._modules and \
           attr not in self._parameters
