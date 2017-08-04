@@ -6,4 +6,3 @@ from __future__ import print_function
 from .core import jit
 from .decorators import atomic
 from .segment import segment, test_segment
-from .nn import jit_instance_method
