@@ -3,15 +3,23 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+
 import ast
 import copy
 import types
 import inspect
+import textwrap
 import functools
 
 from . import segment
 
 _reentrance = False
+
+
+def parse_function_definition(func):
+    source_code = textwrap.dedent(inspect.getsource(func))
+    function_ast = ast.parse(source_code, mode='exec')
+    return function_ast
 
 
 def evaluate_function_definition(function_ast, global_namespace,
