@@ -17,6 +17,13 @@ def user_func():
     return b * a
 
 
+class C():
+    @minpy.jit
+    def method(self):
+        return 'method'
+
+
 print(user_func())
 print(user_func())
 print(user_func())
+print(C().method())

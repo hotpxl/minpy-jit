@@ -6,14 +6,10 @@ from __future__ import print_function
 
 import ast
 import copy
-import types
 import inspect
 import textwrap
 import functools
-
-from . import segment
-
-_reentrance = False
+import contextlib
 
 
 def parse_function_definition(func):
@@ -168,43 +164,6 @@ def add_function_tracing(function_ast):
             closure_arguments)
 
 
-def jit(func):
-    global _reentrance
-    if _reentrance:
-        return func
-    _reentrance = True
-    source_code = inspect.getsource(func)
-    function_ast = ast.parse(source_code, mode='exec')
-
-    @functools.wraps(func)
-    def wrapped_func(*args, **kwargs):
-        global _reentrance
-        _reentrance = True
-        nonlocal function_ast
-        closure_parameters = []
-        closure_arguments = []
-
-        traced_function_ast, i, j = add_type_tracing(function_ast)
-        closure_parameters.extend(i)
-        closure_arguments.extend(j)
-        traced_function_ast, i, j = add_function_tracing(traced_function_ast)
-        closure_parameters.extend(i)
-        closure_arguments.extend(j)
-
-        new_function = evaluate_function_definition(
-            traced_function_ast, func.__globals__, closure_parameters,
-            closure_arguments)
-
-        ret = new_function(*args, **kwargs)
-        print(pretty_print(function_ast, include_attributes=False))
-        #print(pretty_print(segment.segment(function_ast, True)))
-        _reentrance = False
-        return ret
-
-    _reentrance = False
-    return wrapped_func
-
-
 def pretty_print(node,
                  annotate_fields=True,
                  include_attributes=False,
@@ -265,3 +224,28 @@ def copy_ast(function_ast):
     NodeTransformer().visit(new_ast)
 
     return new_ast
+
+
+def return_on_reentrance(f):
+    reentry = False
+
+    @functools.wraps(f)
+    def wrapper(arg):
+        nonlocal reentry
+        if reentry:
+            return arg
+        reentry = True
+        ret = f(arg)
+        reentry = False
+        return ret
+
+    @contextlib.contextmanager
+    def reentrance_guard():
+        nonlocal reentry
+        old_reentry, reentry = reentry, True
+        yield
+        reentry = False
+
+    wrapper.reentrance_guard = reentrance_guard
+
+    return wrapper
