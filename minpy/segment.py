@@ -248,13 +248,10 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
         func_name = '_fuse_func_{}'.format(_segment_cnt)
         _segment_cnt += 1
 
-        # Mark the node as fused
-        for e in nodes:
-            e.fused = True
-
         # TODO: handle subscript and attribute opertion
         func_def = make_fuse_func_def(func_name, nodes, ins, outs)
         call_node = make_call(func_name, ins, outs)
+        call_node.fused = True
         new_funcdefs.append(func_def)
         return call_node
 
@@ -330,8 +327,8 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
                 values[st] = fuse(values[st:st + leng])
                 signs[st] = False
                 removed_num += leng - 1
-                del values[st + 1:st + leng - 1]
-                del signs[st + 1:st + leng - 1]
+                del values[st + 1:st + leng]
+                del signs[st + 1:st + leng]
 
         # CR(haoran): seems you are compiling atomic functions
         # individually. Consider this case:
