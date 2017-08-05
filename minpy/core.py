@@ -199,6 +199,21 @@ def pretty_print(node,
     return format(node)
 
 
+def tree_print(node):
+    def tree_print_lines(node):
+        childs = list(map(tree_print_lines, ast.iter_child_nodes(node)))
+        ret = [type(node).__name__]
+        for c in childs[:-1]:
+            for i, j in enumerate(c):
+                ret.append(('+--' if i == 0 else '|  ') + j)
+        if 0 < len(childs):
+            for i, j in enumerate(childs[-1]):
+                ret.append(('+--' if i == 0 else '   ') + j)
+        return ret
+
+    return '\n'.join(tree_print_lines(node))
+
+
 def copy_ast(function_ast):
     original_nodes = []
 
