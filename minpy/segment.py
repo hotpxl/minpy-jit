@@ -112,7 +112,7 @@ def segment(function_ast, print_new_segment):
     def is_ndarray_type(node):
         # CR(haoran): why FunctionType is ndarray type?
         # use `issubclass`
-        # XCR(yutian): The previous commit is WIP. See more in #237
+        # XCR(yutian): The previous commit is WIP. See more in #L237
         return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
     def is_atomic_func(node):
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
@@ -234,7 +234,8 @@ def segment(function_ast, print_new_segment):
         # I suggest we keep this and change to iter_child_nodes later if above observation still holds
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
-                # ad-hoc: the func attr of ast.Call has no type
+                # ad-hoc: skip func attr of ast.Call,
+                # which could be an ast.Name with the function type
                 if isinstance(node, ast.Call) and name == 'func':
                     atom_signs[name] = False
                     continue
