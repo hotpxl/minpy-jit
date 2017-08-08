@@ -351,6 +351,12 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
         # XCR(yutian): i thnk atomic call could be handled if the definition of rule 1 is extended,
         # i.e. fuse consecutive atomic assignments/expressions
         # XCR(haoran): tested. doesn't work.
+        # i feel like you could separate treatment of stmt and expr
+        # refer to the AST documentation page of difference between two
+        # expr is almost always a nested structure and can be dealt with easily using recursion
+        # stmt is only used at top-level (since we are only considering one level of function definition)
+        # write function that handle a couple of cases of stmt, and then write another one to
+        # handle expr cases
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST) and (atom_signs[name]):
                 new_value = fuse([value])
