@@ -129,9 +129,9 @@ def segment(function_ast, print_new_segment):
                 kwarg=None,
                 defaults=[]),
             body=[
-                *statements, ast.Return(value=ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Load()) for e in outs],
+                *statements,
+                ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(id=e, ctx=ast.Load()) for e in outs],
                     ctx=ast.Load()))
             ],
             decorator_list=[],
@@ -141,15 +141,12 @@ def segment(function_ast, print_new_segment):
         return ast.Assign(
             targets=[
                 ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Store()) for e in outs],
+                    elts=[ast.Name(id=e, ctx=ast.Store()) for e in outs],
                     ctx=ast.Store())
             ],
             value=ast.Call(
-                func=ast.Name(
-                    id=func_name, ctx=ast.Load()),
-                args=[ast.Name(
-                    id=e, ctx=ast.Load()) for e in ins],
+                func=ast.Name(id=func_name, ctx=ast.Load()),
+                args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                 keywords=[]))
 
     new_funcdefs = []
@@ -284,6 +281,13 @@ def segment(function_ast, print_new_segment):
         # Would you be able to fuse all three together?
         # XCR(yutian): i thnk atomic call could be handled if the definition of rule 1 is extended,
         # i.e. fuse consecutive atomic assignments/expressions
+        # XCR(haoran): tested. doesn't work.
+        # i feel like you could separate treatment of stmt and expr
+        # refer to the AST documentation page of difference between two
+        # expr is almost always a nested structure and can be dealt with easily using recursion
+        # stmt is only used at top-level (since we are only considering one level of function definition)
+        # write function that handle a couple of cases of stmt, and then write another one to
+        # handle expr cases
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST) and (atom_signs[name]):
                 new_value = fuse([value])
@@ -338,8 +342,6 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(node, ast.expr):
             return collect_names_given_exprs(node), set([])
         else:
-            # CR(haoran): ast.Store not handled? make sure common
-            # attributes are dealt with
             raise TypeError(
                 'Type {} not handled yet in inputs and outputs inference'.
                 format(type(node).__name__))
