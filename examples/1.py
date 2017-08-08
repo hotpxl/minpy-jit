@@ -1,18 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import sys
+from mxnet import nd
 sys.path.append('../')
-import numpy as np
 import minpy
 
 
 @minpy.jit
 def user_func():
-    a = np.random.normal(size=(3, 3))
+    a = nd.random_normal(shape=(3, 3))
     b = a + 3
-    if 0 < a.sum():
+    if 0 < a.asnumpy().sum():
+        b1 = b + 3
         print('<0')
     else:
+        b2 = b + 3
+        b3 = b2 + 3
         print('>0')
     return b * a
 

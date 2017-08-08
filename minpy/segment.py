@@ -9,11 +9,12 @@ from collections import OrderedDict
 from functools import wraps, reduce
 
 from mxnet import nd
+from . import core
 
 _segment_cnt = 0
 
 
-def segment(node, print_segment=False):
+def segment(node, print_new_segment=False):
     """Given an annotated AST, return a segmented AST
 
     This is the only interface to call after type annotation.
@@ -21,7 +22,7 @@ def segment(node, print_segment=False):
     ----------
     node: annotated AST node
 
-    print_segment: print new segments if True
+    print_new_segment: print new segments if True
 
     Returns
     -------
@@ -30,9 +31,9 @@ def segment(node, print_segment=False):
     """
 
     def is_ndarray_type(node):
-        return hasattr(node, 'type') and isinstance(node.type, nd.NDArray)
+        return hasattr(node, 'type') and (node.type is nd.NDArray or node.type is types.FunctionType)
 
-    return do_segment(node, None, is_ndarray_type, print_segment)
+    return do_segment(node, None, is_ndarray_type, print_new_segment)
 
 
 # CR(haoran): this could be deleted.
@@ -43,7 +44,7 @@ def segment(node, print_segment=False):
 # XCR(yutian): I do agree that sending a fake-annoated ast is not a good idea as
 # it break the structure
 # I'll delete this one as soon as core uses segment without any exception.
-def test_segment(f, print_segment=False):
+def test_segment(f, print_new_segment=False):
     """The function to test segment implementation
 
     The interface to test segment function without the annotation information
@@ -53,7 +54,7 @@ def test_segment(f, print_segment=False):
     ----------
     f: function to segment
 
-    print_segment: print new segments if True
+    print_new_segment: print new segments if True
     """
 
     def is_ndarray_type_fake(x):
@@ -61,7 +62,7 @@ def test_segment(f, print_segment=False):
         return True
 
     node = ast.parse(inspect.getsource(f))
-    node = do_segment(node, f.__globals__, is_ndarray_type_fake, print_segment)
+    node = do_segment(node, f.__globals__, is_ndarray_type_fake, print_new_segment)
     ast.fix_missing_locations(node)
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
@@ -76,7 +77,7 @@ def test_segment(f, print_segment=False):
 
 #CR(haoran): `global_namespace` is not used.
 #XCR(yutian): No, it isn't. will delete this one along with test_segment.
-def do_segment(node, global_namespace, is_ndarray_type, print_segment):
+def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
     """Segment a node given its information collected in the runtime
 
     Parameters
@@ -120,6 +121,7 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
             ast.Assert,
             ast.Import,
             ast.ImportFrom,
+            ast.keyword,
             # More Special Ops
             ast.Global,
             ast.Nonlocal,
@@ -156,7 +158,9 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
             ast.arg)
 
         # TODO: handle fuse of expression
-        skip_fuse_list = (ast.arg, ast.Name, ast.expr)
+        skip_fuse_list = (ast.arg, ast.Name, ast.expr, ast.expr_context,
+            ast.operator, ast.cmpop)
+        #skip_fuse_list = (ast.arg, ast.Name, ast.expr)
 
         @classmethod
         def fuse_check(cls, node):
@@ -238,12 +242,12 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
         ins, outs = infer_inputs_and_outputs_given_nodes(nodes)
 
         global _segment_cnt
-        if print_segment:
+        if print_new_segment:
             print('Segment {} info: '.format(_segment_cnt))
             print('\tinput list: ', ins)
             print('\toutput list: ', outs)
             for i, e in enumerate(nodes):
-                print('\tast node {} '.format(i), e)
+                print('\t ast node {} {}'.format(i, type(e).__name__))
             print('\n')
         func_name = '_fuse_func_{}'.format(_segment_cnt)
         _segment_cnt += 1
@@ -251,6 +255,7 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
         # TODO: handle subscript and attribute opertion
         func_def = make_fuse_func_def(func_name, nodes, ins, outs)
         call_node = make_call(func_name, ins, outs)
+        func_def.fused = True
         call_node.fused = True
         new_funcdefs.append(func_def)
         return call_node
@@ -304,13 +309,15 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
                 all_atom &= atom_signs[name]
             elif isinstance(value, list):
                 atom_signs[name] = []
+                is_assign_target = isinstance(node, ast.Assign) and name == 'targets'
                 for i, e in enumerate(value):
                     if isinstance(e, ast.AST):
                         atom_signs[name].append(iterate_and_fuse(e))
-                        all_atom &= atom_signs[name][i]
+                        all_atom &= True if is_assign_target else atom_signs[name][i]
 
         if all_atom:
             all_atom &= AstTypeHelper.fuse_check(node)
+
 
         # If all child nodes are atomic and the operation itself is good, then
         # leave it to its parent
@@ -318,17 +325,18 @@ def do_segment(node, global_namespace, is_ndarray_type, print_segment):
             return True
 
         # Rule 1: fuse consecutive atomic asssign statements in the body
-        if hasattr(node, 'body'):
-            values = node.body
-            signs = atom_signs['body']
-            removed_num = 0
-            for (st, leng) in get_consecutive_assignments(values, signs):
-                st -= removed_num
-                values[st] = fuse(values[st:st + leng])
-                signs[st] = False
-                removed_num += leng - 1
-                del values[st + 1:st + leng]
-                del signs[st + 1:st + leng]
+        for attr in ['body', 'orelse']:
+            if hasattr(node, attr):
+                values = getattr(node, attr)
+                signs = atom_signs[attr]
+                removed_num = 0
+                for (st, leng) in get_consecutive_assignments(values, signs):
+                    st -= removed_num
+                    values[st] = fuse(values[st:st + leng])
+                    signs[st] = False
+                    removed_num += leng - 1
+                    del values[st + 1:st + leng]
+                    del signs[st + 1:st + leng]
 
         # CR(haoran): seems you are compiling atomic functions
         # individually. Consider this case:
@@ -389,10 +397,10 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             # get inputs from its value expression
             ins, _ = infer_inputs_and_outputs_given_node(node.value)
             # treat all the targets as outputs
-            outs = set([name.id for name in node.targets])
+            outs = collect_names_given_exprs(node.targets)
             return ins, outs
         elif isinstance(node, ast.expr):
-            return infer_inputs_given_exprs(node), set([])
+            return collect_names_given_exprs(node), set([])
         else:
             # CR(haoran): ast.Store not handled? make sure common
             # attributes are dealt with
@@ -400,7 +408,7 @@ def infer_inputs_and_outputs_given_nodes(nodes):
                 'Type {} not handled yet in inputs and outputs inference'.
                 format(type(node).__name__))
 
-    def infer_inputs_given_exprs(expr):
+    def collect_names_given_exprs(expr):
         """Given a ast-node, infer the input variables
         As expression cannot define a new variable, output is not inferred
 
@@ -418,15 +426,15 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             - if it's module or class, then return []
         """
         if isinstance(expr, list):
-            return set.union(*map(infer_inputs_given_exprs, expr))
+            return set.union(*map(collect_names_given_exprs, expr))
         elif isinstance(expr, ast.Call):
-            return infer_inputs_given_exprs(expr.args)
+            return collect_names_given_exprs(expr.args)
         elif isinstance(expr, ast.BinOp):
-            return infer_inputs_given_exprs([expr.left, expr.right])
+            return collect_names_given_exprs([expr.left, expr.right])
         elif isinstance(expr, ast.UnaryOp):
-            return infer_inputs_given_exprs(expr.operand)
+            return collect_names_given_exprs(expr.operand)
         elif isinstance(expr, ast.Tuple):
-            return infer_inputs_given_exprs(expr.elts)
+            return collect_names_given_exprs(expr.elts)
         # CR(haoran): it would be more convenient to handle nested
         # attributes/subscripts as a whole. for example,
         # `nd.random.normal` would be treated as one single input,
