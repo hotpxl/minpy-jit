@@ -199,10 +199,17 @@ def pretty_print(node,
     return format(node)
 
 
-def tree_print(node):
+def tree_print(node, extra_attributes=['type', 'ref']):
     def tree_print_lines(node):
         childs = list(map(tree_print_lines, ast.iter_child_nodes(node)))
-        ret = [type(node).__name__]
+        fields = list(iter_non_node_children(node))
+        for i in extra_attributes:
+            if hasattr(node, i):
+                fields.append((i, getattr(node, i).__name__))
+        ret = [
+            type(node).__name__ + '(' +
+            ', '.join(map(lambda pair: '{}={}'.format(*pair), fields)) + ')'
+        ]
         for c in childs[:-1]:
             for i, j in enumerate(c):
                 ret.append(('+--' if i == 0 else '|  ') + j)
@@ -264,3 +271,13 @@ def return_on_reentrance(f):
     wrapper.reentrance_guard = reentrance_guard
 
     return wrapper
+
+
+def iter_non_node_children(node):
+    for name, field in ast.iter_fields(node):
+        if not isinstance(field, (ast.AST, list)):
+            yield name, field
+        elif isinstance(field, list):
+            for item in field:
+                if not isinstance(item, ast.AST):
+                    yield name, item
