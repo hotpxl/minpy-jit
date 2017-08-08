@@ -13,86 +13,14 @@ from . import core
 
 _segment_cnt = 0
 
-
-def segment(node, print_new_segment=False):
-    """Given an annotated AST, return a segmented AST
-
-    This is the only interface to call after type annotation.
-    Parameters
-    ----------
-    node: annotated AST node
-
-    print_new_segment: print new segments if True
-
-    Returns
-    -------
-    ast: segmented AST
-
-    """
-
-    def is_ndarray_type(node):
-        return hasattr(node, 'type') and (node.type is nd.NDArray or node.type is types.FunctionType)
-
-    return do_segment(node, None, is_ndarray_type, print_new_segment)
-
-
-# CR(haoran): this could be deleted.
-# XCR(yutian): it's for testing purpose. Let's delete or move this func to unit-test later
-# XCR(haoran): better write unit test where you pass in a annotated
-# AST, instead of passing in a function that pretends the tree is
-# annotated
-# XCR(yutian): I do agree that sending a fake-annoated ast is not a good idea as
-# it break the structure
-# I'll delete this one as soon as core uses segment without any exception.
-def test_segment(f, print_new_segment=False):
-    """The function to test segment implementation
-
-    The interface to test segment function without the annotation information
-    The input is the function object instead of parsed ast node.
-
-    Parameters
-    ----------
-    f: function to segment
-
-    print_new_segment: print new segments if True
-    """
-
-    def is_ndarray_type_fake(x):
-        # The ast is not annotated with type attribute
-        return True
-
-    node = ast.parse(inspect.getsource(f))
-    node = do_segment(node, f.__globals__, is_ndarray_type_fake, print_new_segment)
-    ast.fix_missing_locations(node)
-    node.body[0].name += '_rewritten'
-    func_name = node.body[0].name
-    global_namespace = f.__globals__.copy()
-    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
-
-    def wrapper(*args, **kwargs):
-        return global_namespace[func_name](*args, **kwargs)
-
-    return wrapper
-
-
-#CR(haoran): `global_namespace` is not used.
-#XCR(yutian): No, it isn't. will delete this one along with test_segment.
-def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
-    """Segment a node given its information collected in the runtime
+def segment(function_ast, print_new_segment):
+    """Segment a function ast given its information collected in the runtime
 
     Parameters
     ------
-    node:  ast.Ast
+    function_ast:  function Ast
 
-    global_namespace: function's module namespace
-
-    is_ndarray_type: the func for checking the types for ast.Name, ast.Call return values
-
-    # Puzzles:whether we need to record the function type?
-        - it depends on whether @Jit/Atomic decorator is removed in the annotation stage.
-
-    # Potential missing Input: variable liveness, i.e. whether one variable is accessed in the future or not
-        - Let's assume all the output variables are accessed, i.e. the worst case
+    print_new_segment: print new segments if True
     """
 
     class AstTypeHelper:
@@ -158,9 +86,8 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
             ast.arg)
 
         # TODO: handle fuse of expression
-        skip_fuse_list = (ast.arg, ast.Name, ast.expr, ast.expr_context,
+        never_fuse_types = (ast.arg, ast.Name, ast.expr, ast.expr_context,
             ast.operator, ast.cmpop)
-        #skip_fuse_list = (ast.arg, ast.Name, ast.expr)
 
         @classmethod
         def fuse_check(cls, node):
@@ -182,9 +109,12 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
             raise TypeError('Type {} not handled yet in fuse check'.format(
                 type(node).__name__))
 
+    def is_ndarray_type(node):
+        return hasattr(node, 'type') and (node.type is nd.NDArray or node.type is types.FunctionType)
+
     def is_atomic_func(node):
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
-            return node.ref.__dict__.get('__minpy_atomic', False)
+            return node.ref.__dict__.get('__minpy_atomic', False) or node.ref in nd.__dict__.values()
         else:
             return False
 
@@ -236,7 +166,7 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
         """
         # Do nothing on unit op
         if len(nodes) == 1 and isinstance(nodes[0],
-                                          AstTypeHelper.skip_fuse_list):
+                                          AstTypeHelper.never_fuse_types):
             return nodes[0]
 
         ins, outs = infer_inputs_and_outputs_given_nodes(nodes)
@@ -293,7 +223,7 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
             return False
 
         atom_signs = {}
-        all_atom = True
+        fuse_entire_node = True
         # CR(haoran): use iter_child_nodes so you don't have to check
         # whether it's a list
         # (https://github.com/python/cpython/blob/3.6/Lib/ast.py#L178)
@@ -305,23 +235,29 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
         # I suggest we keep this and change to iter_child_nodes later if above observation still holds
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
+                # ad-hoc: the func attr of ast.Call has no type
+                if isinstance(node, ast.Call) and name == 'func':
+                    atom_signs[name] = False
+                    continue
                 atom_signs[name] = iterate_and_fuse(value)
-                all_atom &= atom_signs[name]
+                fuse_entire_node &= atom_signs[name]
             elif isinstance(value, list):
                 atom_signs[name] = []
-                is_assign_target = isinstance(node, ast.Assign) and name == 'targets'
+                # ad-hoc: left operand of assign has no type
+                if isinstance(node, ast.Assign) and name == 'targets':
+                    atom_signs[name] = [False] * len(value)
+                    continue
                 for i, e in enumerate(value):
                     if isinstance(e, ast.AST):
                         atom_signs[name].append(iterate_and_fuse(e))
-                        all_atom &= True if is_assign_target else atom_signs[name][i]
+                        fuse_entire_node &= atom_signs[name][i]
 
-        if all_atom:
-            all_atom &= AstTypeHelper.fuse_check(node)
-
+        if fuse_entire_node:
+            fuse_entire_node &= AstTypeHelper.fuse_check(node)
 
         # If all child nodes are atomic and the operation itself is good, then
         # leave it to its parent
-        if all_atom:
+        if fuse_entire_node:
             return True
 
         # Rule 1: fuse consecutive atomic asssign statements in the body
@@ -361,11 +297,11 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
                 value[:] = new_values
         return False
 
-    if iterate_and_fuse(node):
-        node = fuse([node])
+    if iterate_and_fuse(function_ast):
+        function_ast = fuse([function_ast])
     # Insert new fuse function definitions to function body
-    node.body[0].body[0:0] = new_funcdefs
-    return node
+    function_ast.body[0].body[0:0] = new_funcdefs
+    return function_ast
 
 
 def infer_inputs_and_outputs_given_nodes(nodes):

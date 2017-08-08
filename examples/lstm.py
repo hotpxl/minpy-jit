@@ -21,7 +21,6 @@ def sigmoid(x):
     return .5 * (nd.tanh(.5 * x) + 1)
 
 
-@atomic
 def gaussian(shape):
     return nd.random_normal(shape=shape).as_in_context(context)
 
