@@ -31,7 +31,10 @@ def segment(node, print_new_segment=False):
     """
 
     def is_ndarray_type(node):
-        return hasattr(node, 'type') and (node.type is nd.NDArray or node.type is types.FunctionType)
+        # CR(haoran): why FunctionType is ndarray type?
+        # use `issubclass`
+        return hasattr(node, 'type') and (node.type is nd.NDArray
+                                          or node.type is types.FunctionType)
 
     return do_segment(node, None, is_ndarray_type, print_new_segment)
 
@@ -62,12 +65,13 @@ def test_segment(f, print_new_segment=False):
         return True
 
     node = ast.parse(inspect.getsource(f))
-    node = do_segment(node, f.__globals__, is_ndarray_type_fake, print_new_segment)
+    node = do_segment(node, f.__globals__, is_ndarray_type_fake,
+                      print_new_segment)
     ast.fix_missing_locations(node)
     node.body[0].name += '_rewritten'
     func_name = node.body[0].name
     global_namespace = f.__globals__.copy()
-    exec (compile(node, filename='<ast>', mode='exec'), global_namespace)
+    exec(compile(node, filename='<ast>', mode='exec'), global_namespace)
 
     def wrapper(*args, **kwargs):
         return global_namespace[func_name](*args, **kwargs)
@@ -159,7 +163,7 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
 
         # TODO: handle fuse of expression
         skip_fuse_list = (ast.arg, ast.Name, ast.expr, ast.expr_context,
-            ast.operator, ast.cmpop)
+                          ast.operator, ast.cmpop)
         #skip_fuse_list = (ast.arg, ast.Name, ast.expr)
 
         @classmethod
@@ -199,9 +203,9 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
                 kwarg=None,
                 defaults=[]),
             body=[
-                *statements, ast.Return(value=ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Load()) for e in outs],
+                *statements,
+                ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(id=e, ctx=ast.Load()) for e in outs],
                     ctx=ast.Load()))
             ],
             decorator_list=[],
@@ -211,15 +215,12 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
         return ast.Assign(
             targets=[
                 ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Store()) for e in outs],
+                    elts=[ast.Name(id=e, ctx=ast.Store()) for e in outs],
                     ctx=ast.Store())
             ],
             value=ast.Call(
-                func=ast.Name(
-                    id=func_name, ctx=ast.Load()),
-                args=[ast.Name(
-                    id=e, ctx=ast.Load()) for e in ins],
+                func=ast.Name(id=func_name, ctx=ast.Load()),
+                args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                 keywords=[]))
 
     new_funcdefs = []
@@ -309,15 +310,16 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
                 all_atom &= atom_signs[name]
             elif isinstance(value, list):
                 atom_signs[name] = []
-                is_assign_target = isinstance(node, ast.Assign) and name == 'targets'
+                is_assign_target = isinstance(node,
+                                              ast.Assign) and name == 'targets'
                 for i, e in enumerate(value):
                     if isinstance(e, ast.AST):
                         atom_signs[name].append(iterate_and_fuse(e))
-                        all_atom &= True if is_assign_target else atom_signs[name][i]
+                        all_atom &= True if is_assign_target else atom_signs[
+                            name][i]
 
         if all_atom:
             all_atom &= AstTypeHelper.fuse_check(node)
-
 
         # If all child nodes are atomic and the operation itself is good, then
         # leave it to its parent
@@ -348,6 +350,7 @@ def do_segment(node, global_namespace, is_ndarray_type, print_new_segment):
         # Would you be able to fuse all three together?
         # XCR(yutian): i thnk atomic call could be handled if the definition of rule 1 is extended,
         # i.e. fuse consecutive atomic assignments/expressions
+        # XCR(haoran): tested. doesn't work.
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST) and (atom_signs[name]):
                 new_value = fuse([value])
@@ -402,8 +405,6 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         elif isinstance(node, ast.expr):
             return collect_names_given_exprs(node), set([])
         else:
-            # CR(haoran): ast.Store not handled? make sure common
-            # attributes are dealt with
             raise TypeError(
                 'Type {} not handled yet in inputs and outputs inference'.
                 format(type(node).__name__))
