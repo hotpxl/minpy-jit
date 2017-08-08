@@ -110,8 +110,10 @@ def segment(function_ast, print_new_segment):
                 type(node).__name__))
 
     def is_ndarray_type(node):
-        return hasattr(node, 'type') and (node.type is nd.NDArray or node.type is types.FunctionType)
-
+        # CR(haoran): why FunctionType is ndarray type?
+        # use `issubclass`
+        # XCR(yutian): The previous commit is WIP. See more in #237
+        return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
     def is_atomic_func(node):
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
             return node.ref.__dict__.get('__minpy_atomic', False) or node.ref in nd.__dict__.values()
