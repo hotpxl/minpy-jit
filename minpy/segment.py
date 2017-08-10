@@ -13,6 +13,180 @@ from . import core
 
 _segment_cnt = 0
 
+
+def segment_reform(function_ast, print_new_segment):
+    def set_rewrite_info(node, name, value):
+        node.__dict__.setdefault(name, value)
+
+    def get_rewrite_info(node, name, default_value):
+        return node.__dict__.get(name, default_value)
+
+    def is_ndarray_type(node):
+        return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
+
+    def is_atomic_func(node):
+        if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
+            return node.ref.__dict__.get(
+                '__minpy_atomic', False) or node.ref in nd.__dict__.values()
+        else:
+            return False
+
+    class Collector(ast.NodeTransformer):
+        def collect_info(self, node, attrs=[], funcs=[]):
+            self.generic_visit(node)
+            do_fuse = True
+            for name in attrs:
+                child = getattr(node, name)
+                if isinstance(child, list):
+                    for e in child:
+                        do_fuse &= get_rewrite_info(e, 'fuse', False)
+                else:
+                    do_fuse = get_rewrite_info(child, 'fuse', False)
+
+            for func in funcs:
+                do_fuse &= func(node)
+
+            set_rewrite_info(node, 'fuse', do_fuse)
+            return node
+
+        def visit_FunctionDef(self, node):
+            self.generic_visit(node)
+            return node
+
+        def visit_If(self, node):
+            self.generic_visit(node)
+            return node
+
+        def visit_Assign(self, node):
+            return self.collect_info(node, attrs=['value'])
+
+        def visit_Call(self, node):
+            return self.collect_info(
+                node, attrs=['args'], funcs=[is_atomic_func])
+
+        def visit_BinOp(self, node):
+            return self.collect_info(
+                node, attrs=['left', 'right'], funcs=[is_ndarray_type])
+
+        def visit_Name(self, node):
+            return self.collect_info(node, funcs=[is_ndarray_type])
+
+        def visit_Num(self, node):
+            return self.collect_info(node)
+
+        def visit_Attribute(self, node):
+            # Treat an attribute expr as a whole
+            return self.collect_info(node, funcs=[is_ndarray_type])
+
+        def visit_Subscript(self, node):
+            # Treat a subscript expr as a whole
+            return self.collect_info(node, funcs=[is_ndarray_type])
+
+    class NodeRewriter(ast.NodeTransformer):
+        def fuse_consecutive_assignments(self, stmts):
+            def make_ast_call(func_name, ins, outs):
+                return ast.Assign(
+                    targets=[
+                        ast.Tuple(
+                            elts=[
+                                ast.Name(
+                                    id=e, ctx=ast.Store()) for e in outs
+                            ],
+                            ctx=ast.Store())
+                    ],
+                    value=ast.Call(
+                        func=ast.Name(
+                            id=func_name, ctx=ast.Load()),
+                        args=[ast.Name(
+                            id=e, ctx=ast.Load()) for e in ins],
+                        keywords=[]))
+
+            def make_ast_functionDef(func_name, stmts, ins, outs):
+                return ast.FunctionDef(
+                    name=func_name,
+                    args=ast.arguments(
+                        args=[ast.arg(arg=e, annotation=None) for e in ins],
+                        vararg=None,
+                        kwonlyargs=[],
+                        kw_defaults=[],
+                        kwarg=None,
+                        defaults=[]),
+                    body=[
+                        *stmts, ast.Return(value=ast.Tuple(
+                            elts=[
+                                ast.Name(
+                                    id=e, ctx=ast.Load()) for e in outs
+                            ],
+                            ctx=ast.Load()))
+                    ],
+                    decorator_list=[],
+                    returns=None)
+
+            def fuse(nodes):
+                ins, outs = infer_inputs_and_outputs_given_nodes(nodes)
+
+                global _segment_cnt
+                if print_new_segment:
+                    print('Segment {} info: '.format(_segment_cnt))
+                    print('\tinput list: ', ins)
+                    print('\toutput list: ', outs)
+                    for i, e in enumerate(nodes):
+                        print('\t ast node {} {}'.format(i, type(e).__name__))
+                    print('\n')
+                func_name = '_fuse_func_{}'.format(_segment_cnt)
+                _segment_cnt += 1
+
+                func_def = make_ast_functionDef(func_name, nodes, ins, outs)
+                call_node = make_ast_call(func_name, ins, outs)
+                new_funcdefs.append(func_def)
+                return call_node
+
+            def get_consecutive_assignments(stmts):
+                pos, leng = (0, 0)
+                while pos < len(stmts):
+                    if isinstance(stmts[pos], ast.Assign) and get_rewrite_info(
+                            stmts[pos], 'fuse', False):
+                        leng += 1
+                    else:
+                        if leng > 0:
+                            yield (pos - leng, leng)
+                            leng = 0
+                    pos += 1
+                if leng > 0:
+                    yield (pos - leng, leng)
+
+            removed_num = 0
+            for (st, leng) in get_consecutive_assignments(stmts):
+                st -= removed_num
+                stmts[st] = fuse(stmts[st:st + leng])
+                removed_num += leng - 1
+                del stmts[st + 1:st + leng]
+
+        def visit_FunctionDef(self, node):
+            if not get_rewrite_info(node, 'jitFunc', False):
+                return node
+            self.generic_visit(node)
+            self.fuse_consecutive_assignments(node.body)
+            return node
+
+        def visit_If(self, node):
+            self.generic_visit(node)
+            self.fuse_consecutive_assignments(node.body)
+            self.fuse_consecutive_assignments(node.orelse)
+            return node
+
+    collector = Collector()
+    collector.generic_visit(function_ast)
+
+    rewriter = NodeRewriter()
+    new_funcdefs = []
+    set_rewrite_info(function_ast.body[0], 'jitFunc', True)
+    rewriter.generic_visit(function_ast)
+
+    function_ast.body[0].body[0:0] = new_funcdefs
+    return function_ast
+
+
 def segment(function_ast, print_new_segment):
     """Segment a function ast given its information collected in the runtime
 
@@ -87,7 +261,7 @@ def segment(function_ast, print_new_segment):
 
         # TODO: handle fuse of expression
         never_fuse_types = (ast.arg, ast.Name, ast.expr, ast.expr_context,
-            ast.operator, ast.cmpop)
+                            ast.operator, ast.cmpop)
 
         @classmethod
         def fuse_check(cls, node):
@@ -114,9 +288,11 @@ def segment(function_ast, print_new_segment):
         # use `issubclass`
         # XCR(yutian): The previous commit is WIP. See more in #L237
         return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
+
     def is_atomic_func(node):
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
-            return node.ref.__dict__.get('__minpy_atomic', False) or node.ref in nd.__dict__.values()
+            return node.ref.__dict__.get(
+                '__minpy_atomic', False) or node.ref in nd.__dict__.values()
         else:
             return False
 
@@ -131,9 +307,9 @@ def segment(function_ast, print_new_segment):
                 kwarg=None,
                 defaults=[]),
             body=[
-                *statements,
-                ast.Return(value=ast.Tuple(
-                    elts=[ast.Name(id=e, ctx=ast.Load()) for e in outs],
+                *statements, ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(
+                        id=e, ctx=ast.Load()) for e in outs],
                     ctx=ast.Load()))
             ],
             decorator_list=[],
@@ -143,12 +319,15 @@ def segment(function_ast, print_new_segment):
         return ast.Assign(
             targets=[
                 ast.Tuple(
-                    elts=[ast.Name(id=e, ctx=ast.Store()) for e in outs],
+                    elts=[ast.Name(
+                        id=e, ctx=ast.Store()) for e in outs],
                     ctx=ast.Store())
             ],
             value=ast.Call(
-                func=ast.Name(id=func_name, ctx=ast.Load()),
-                args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
+                func=ast.Name(
+                    id=func_name, ctx=ast.Load()),
+                args=[ast.Name(
+                    id=e, ctx=ast.Load()) for e in ins],
                 keywords=[]))
 
     new_funcdefs = []
@@ -367,7 +546,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             - if it's module or class, then return []
         """
         if isinstance(expr, list):
-            return set.union(*map(collect_names_given_exprs, expr))
+            return set.union(*map(collect_names_given_exprs,
+                                  expr)) if expr else set()
         elif isinstance(expr, ast.Call):
             return collect_names_given_exprs(expr.args)
         elif isinstance(expr, ast.BinOp):
