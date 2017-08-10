@@ -35,7 +35,7 @@ def jit(f):
 
             ret = new_function(*args, **kwargs)
             print(core.pretty_print(function_ast, include_attributes=False))
-            function_ast = segment.segment(function_ast, True)
+            function_ast = segment.segment_reform(function_ast, True)
             print(core.pretty_print(function_ast, include_attributes=False))
             return ret
 
