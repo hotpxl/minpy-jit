@@ -66,6 +66,17 @@ def segment_reform(function_ast, print_new_segment):
                 child = getattr(node, name)
                 if isinstance(child, list):
                     for e in child:
+                        # CR(haoran): the separation of & logic
+                        # operation is unnecessary here. and it makes
+                        # the code more confusing.
+                        # also, instead of calling this a general
+                        # infocollector, might as well be a
+                        # specialized function just for jit. try to
+                        # generalize on functions instead of data
+                        # structures (data structures are hard to
+                        # reuse)
+                        # why not try use map and reduce and
+                        # everything will be much clearer?
                         info = self._info_helper.update(
                             info, self._info_helper.get(e))
                 else:
@@ -90,10 +101,19 @@ def segment_reform(function_ast, print_new_segment):
             return self._collect_info(node, attrs=['value'])
 
         def visit_Call(self, node):
+            # CR(haoran): atomic functions could also take lists or
+            # dictionaries of ndarrays, or read-only objects. how do
+            # you deal with that?
+            # On the other hand, prevent stuff like `atomic(3 if
+            # some_flag else 2, ...)` from fusing
+            # I don't have a solution but i feel there is a simple
+            # solution
             return self._collect_info(
                 node, attrs=['args'], funcs=['is_atomic_func'])
 
         def visit_BinOp(self, node):
+            # CR(haoran): incorrect? numpy.ndarray + integer_literal
+            # is also a valid fusable operation
             return self._collect_info(
                 node, attrs=['left', 'right'], funcs=['is_ndarray_type'])
 
@@ -227,6 +247,24 @@ def segment_reform(function_ast, print_new_segment):
                              lambda x: x)
     jit_helper = InfoHelper('jit_func', True, False)
 
+    # CR(haoran): to my understanding, you need two kinds of information
+    # 1. recursive call of "fusability". this is basically what
+    # "fuse_helper" is doing right now. this acts on expressions,
+    # because only expressions can nest in itself
+    # 2. gather input and output arguments. this is what Rewriter is doing IIRC.
+    # one implication is, this information is only gathered from
+    # statements. BECAUSE, only assign statements can change the
+    # environment/scope/$$\Gamma$$
+    #
+    # of course after two steps you then need to find consecutive
+    # STATEMENTS and merge them together (ps here is bug, i mentioned
+    # down in the old code)
+    #
+    # So my proposition is, instead of abstracting data structure into
+    # InfoCollector and Helper, write the NodeTransformer or Visitor
+    # as is and just hard code the logic. NodeTransformer/Visitor
+    # itself is already using visitor pattern so should largely handle
+    # the plumbing
     collector = InfoCollector(
         fuse_helper, funcs=[is_ndarray_type, is_atomic_func])
     collector.generic_visit(function_ast)
