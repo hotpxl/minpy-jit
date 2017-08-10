@@ -12,32 +12,28 @@ from mxnet import nd
 from . import core
 
 _segment_cnt = 0
+_ndarray_funcs = nd.__dict__.values()
 
 
-# CR(haoran): i feel it is confusing with both `__dict__` and `getattr`, `setattr`
-# let's use `get/setattr` all the way and avoid `__dict__` directly
 def segment_reform(function_ast, print_new_segment):
     class InfoHelper:
         def __init__(self,
                      name,
                      init_value,
-                     default_value,
+                     get_default_value,
                      update_func=None,
                      rewrite_cond=None):
             self.name = name
             self.init_value = init_value
-            self.default_value = default_value
+            self.get_default_value = get_default_value
             self.update_func = update_func
             self.rewrite_cond = rewrite_cond
 
         def set(self, node, value):
-            # CR(haoran): can we just do `setattr(node, name, value)`?
-            node.__dict__[self.name] = value
+            setattr(node, self.name, value)
 
         def get(self, node):
-            # CR(haoran): same here, use getattr uniformly.
-            # `getattr(node, name, default_value)`
-            return node.__dict__.get(self.name, self.default_value)
+            return getattr(node, self.name, self.get_default_value)
 
         def do_rewrite(self, node):
             return self.rewrite_cond(self.get(node))
@@ -114,13 +110,16 @@ def segment_reform(function_ast, print_new_segment):
                     targets=[
                         ast.Tuple(
                             elts=[
-                                ast.Name(id=e, ctx=ast.Store()) for e in outs
+                                ast.Name(
+                                    id=e, ctx=ast.Store()) for e in outs
                             ],
                             ctx=ast.Store())
                     ],
                     value=ast.Call(
-                        func=ast.Name(id=func_name, ctx=ast.Load()),
-                        args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
+                        func=ast.Name(
+                            id=func_name, ctx=ast.Load()),
+                        args=[ast.Name(
+                            id=e, ctx=ast.Load()) for e in ins],
                         keywords=[]))
 
             def make_ast_function_def(func_name, stmts, ins, outs):
@@ -134,10 +133,10 @@ def segment_reform(function_ast, print_new_segment):
                         kwarg=None,
                         defaults=[]),
                     body=[
-                        *stmts,
-                        ast.Return(value=ast.Tuple(
+                        *stmts, ast.Return(value=ast.Tuple(
                             elts=[
-                                ast.Name(id=e, ctx=ast.Load()) for e in outs
+                                ast.Name(
+                                    id=e, ctx=ast.Load()) for e in outs
                             ],
                             ctx=ast.Load()))
                     ],
@@ -158,7 +157,7 @@ def segment_reform(function_ast, print_new_segment):
                 func_name = '_fuse_func_{}'.format(_segment_cnt)
                 _segment_cnt += 1
 
-                func_def = make_ast_functionDef(func_name, nodes, ins, outs)
+                func_def = make_ast_function_def(func_name, nodes, ins, outs)
                 call_node = make_ast_call(func_name, ins, outs)
                 new_funcdefs.append(func_def)
                 return call_node
@@ -205,9 +204,12 @@ def segment_reform(function_ast, print_new_segment):
         # CR(haoran): ditto
         # 1. `__dict__` always exists
         # 2. nd.__dict__.values() might be a performance issue (everything else is O(1) and this is O(n))
+        # XCR(yutian): 1. i think builtin_function doesn't have '__dict__' attribute, e.g. print
+        # 2. how about this:
+        global _ndarray_funcs
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
-            return node.ref.__dict__.get(
-                '__minpy_atomic', False) or node.ref in nd.__dict__.values()
+            return node.ref.__dict__.get('__minpy_atomic',
+                                         False) or node.ref in _ndarray_funcs
         else:
             return False
 
@@ -348,9 +350,9 @@ def segment(function_ast, print_new_segment):
                 kwarg=None,
                 defaults=[]),
             body=[
-                *statements,
-                ast.Return(value=ast.Tuple(
-                    elts=[ast.Name(id=e, ctx=ast.Load()) for e in outs],
+                *statements, ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(
+                        id=e, ctx=ast.Load()) for e in outs],
                     ctx=ast.Load()))
             ],
             decorator_list=[],
@@ -360,12 +362,15 @@ def segment(function_ast, print_new_segment):
         return ast.Assign(
             targets=[
                 ast.Tuple(
-                    elts=[ast.Name(id=e, ctx=ast.Store()) for e in outs],
+                    elts=[ast.Name(
+                        id=e, ctx=ast.Store()) for e in outs],
                     ctx=ast.Store())
             ],
             value=ast.Call(
-                func=ast.Name(id=func_name, ctx=ast.Load()),
-                args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
+                func=ast.Name(
+                    id=func_name, ctx=ast.Load()),
+                args=[ast.Name(
+                    id=e, ctx=ast.Load()) for e in ins],
                 keywords=[]))
 
     new_funcdefs = []
