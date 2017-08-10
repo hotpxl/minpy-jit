@@ -17,46 +17,57 @@ _segment_cnt = 0
 # CR(haoran): i feel it is confusing with both `__dict__` and `getattr`, `setattr`
 # let's use `get/setattr` all the way and avoid `__dict__` directly
 def segment_reform(function_ast, print_new_segment):
-    def set_rewrite_info(node, name, value):
-        # CR(haoran): why setdefault?
-        # can we just do `setattr(node, name, value)`?
-        node.__dict__.setdefault(name, value)
+    class InfoHelper:
+        def __init__(self,
+                     name,
+                     init_value,
+                     default_value,
+                     update_func=None,
+                     rewrite_cond=None):
+            self.name = name
+            self.init_value = init_value
+            self.default_value = default_value
+            self.update_func = update_func
+            self.rewrite_cond = rewrite_cond
 
-    def get_rewrite_info(node, name, default_value):
-        # CR(haoran): same here, use getattr uniformly.
-        # `getattr(node, name, default_value)`
-        return node.__dict__.get(name, default_value)
+        def set(self, node, value):
+            # CR(haoran): can we just do `setattr(node, name, value)`?
+            node.__dict__[self.name] = value
 
-    def is_ndarray_type(node):
-        return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
+        def get(self, node):
+            # CR(haoran): same here, use getattr uniformly.
+            # `getattr(node, name, default_value)`
+            return node.__dict__.get(self.name, self.default_value)
 
-    def is_atomic_func(node):
-        # CR(haoran): ditto
-        # 1. `__dict__` always exists
-        # 2. nd.__dict__.values() might be a performance issue (everything else is O(1) and this is O(n))
-        if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
-            return node.ref.__dict__.get(
-                '__minpy_atomic', False) or node.ref in nd.__dict__.values()
-        else:
-            return False
+        def do_rewrite(self, node):
+            return self.rewrite_cond(self.get(node))
 
-    class Collector(ast.NodeTransformer):
+        def update(self, *values):
+            return self.update_func(*values)
+
+    class InfoCollector(ast.NodeTransformer):
+        def __init__(self, info_helper, funcs=[]):
+            super(InfoCollector, self).__init__()
+            self.info_helper = info_helper
+            self.funcs = {func.__name__: func for func in funcs}
+
         def collect_info(self, node, attrs=[], funcs=[]):
             self.generic_visit(node)
-            do_fuse = True
+            info = self.info_helper.init_value
             for name in attrs:
                 child = getattr(node, name)
                 if isinstance(child, list):
                     for e in child:
-                        do_fuse &= get_rewrite_info(e, 'fuse', False)
+                        info = self.info_helper.update(info,
+                                                       self.info_helper.get(e))
                 else:
-                    # CR(haoran): &= ?
-                    do_fuse = get_rewrite_info(child, 'fuse', False)
+                    info = self.info_helper.update(info,
+                                                   self.info_helper.get(child))
 
-            for func in funcs:
-                do_fuse &= func(node)
+            for name in funcs:
+                info = self.info_helper.update(info, self.funcs[name](node))
 
-            set_rewrite_info(node, 'fuse', do_fuse)
+            self.info_helper.set(node, info)
             return node
 
         def visit_FunctionDef(self, node):
@@ -72,27 +83,31 @@ def segment_reform(function_ast, print_new_segment):
 
         def visit_Call(self, node):
             return self.collect_info(
-                node, attrs=['args'], funcs=[is_atomic_func])
+                node, attrs=['args'], funcs=['is_atomic_func'])
 
         def visit_BinOp(self, node):
             return self.collect_info(
-                node, attrs=['left', 'right'], funcs=[is_ndarray_type])
+                node, attrs=['left', 'right'], funcs=['is_ndarray_type'])
 
         def visit_Name(self, node):
-            return self.collect_info(node, funcs=[is_ndarray_type])
+            return self.collect_info(node, funcs=['is_ndarray_type'])
 
         def visit_Num(self, node):
             return self.collect_info(node)
 
         def visit_Attribute(self, node):
             # Treat an attribute expr as a whole
-            return self.collect_info(node, funcs=[is_ndarray_type])
+            return self.collect_info(node, funcs=['is_ndarray_type'])
 
         def visit_Subscript(self, node):
             # Treat a subscript expr as a whole
-            return self.collect_info(node, funcs=[is_ndarray_type])
+            return self.collect_info(node, funcs=['is_ndarray_type'])
 
     class NodeRewriter(ast.NodeTransformer):
+        def __init__(self, info_helper):
+            super(NodeRewriter, self).__init__()
+            self.info_helper = info_helper
+
         def fuse_consecutive_assignments(self, stmts):
             def make_ast_call(func_name, ins, outs):
                 return ast.Assign(
@@ -108,9 +123,7 @@ def segment_reform(function_ast, print_new_segment):
                         args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                         keywords=[]))
 
-            # CR(haoran): https://google.github.io/styleguide/pyguide.html?showone=Naming#Naming
-            # make_ast_function_def
-            def make_ast_functionDef(func_name, stmts, ins, outs):
+            def make_ast_function_def(func_name, stmts, ins, outs):
                 return ast.FunctionDef(
                     name=func_name,
                     args=ast.arguments(
@@ -153,8 +166,9 @@ def segment_reform(function_ast, print_new_segment):
             def get_consecutive_assignments(stmts):
                 pos, leng = (0, 0)
                 while pos < len(stmts):
-                    if isinstance(stmts[pos], ast.Assign) and get_rewrite_info(
-                            stmts[pos], 'fuse', False):
+                    if isinstance(stmts[pos],
+                                  ast.Assign) and self.info_helper.do_rewrite(
+                                      stmts[pos]):
                         leng += 1
                     else:
                         if leng > 0:
@@ -172,7 +186,7 @@ def segment_reform(function_ast, print_new_segment):
                 del stmts[st + 1:st + leng]
 
         def visit_FunctionDef(self, node):
-            if not get_rewrite_info(node, 'jit_func', False):
+            if not jit_helper.get(node):
                 return node
             self.generic_visit(node)
             self.fuse_consecutive_assignments(node.body)
@@ -184,12 +198,30 @@ def segment_reform(function_ast, print_new_segment):
             self.fuse_consecutive_assignments(node.orelse)
             return node
 
-    collector = Collector()
+    def is_ndarray_type(node):
+        return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
+
+    def is_atomic_func(node):
+        # CR(haoran): ditto
+        # 1. `__dict__` always exists
+        # 2. nd.__dict__.values() might be a performance issue (everything else is O(1) and this is O(n))
+        if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
+            return node.ref.__dict__.get(
+                '__minpy_atomic', False) or node.ref in nd.__dict__.values()
+        else:
+            return False
+
+    fuse_helper = InfoHelper('fuse_as_whole', True, False, lambda x, y: x & y,
+                             lambda x: x)
+    jit_helper = InfoHelper('jit_func', True, False)
+
+    collector = InfoCollector(
+        fuse_helper, funcs=[is_ndarray_type, is_atomic_func])
     collector.generic_visit(function_ast)
 
-    rewriter = NodeRewriter()
+    rewriter = NodeRewriter(fuse_helper)
     new_funcdefs = []
-    set_rewrite_info(function_ast.body[0], 'jit_func', True)
+    jit_helper.set(function_ast.body[0], jit_helper.init_value)
     rewriter.generic_visit(function_ast)
 
     function_ast.body[0].body[0:0] = new_funcdefs
