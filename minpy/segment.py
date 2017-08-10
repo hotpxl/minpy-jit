@@ -14,56 +14,63 @@ from . import core
 _segment_cnt = 0
 _ndarray_funcs = nd.__dict__.values()
 
+# CR(haoran): I use yapf 0.16.3 with Python 3.6.2. My yapf is the
+# latest version. Are you using the same version?  I see a lot of
+# reformatting back and forth. Might be yapf issue.
+
 
 def segment_reform(function_ast, print_new_segment):
-    class InfoHelper:
+    class InfoHelper():
         def __init__(self,
                      name,
                      init_value,
                      get_default_value,
                      update_func=None,
                      rewrite_cond=None):
-            self.name = name
+            # CR(haoran): https://google.github.io/styleguide/pyguide.html?showone=Naming#Naming
+            # prepend underscore to private instance variables.
+            # just FYI. I've done it already
+            self._name = name
             self.init_value = init_value
-            self.get_default_value = get_default_value
-            self.update_func = update_func
-            self.rewrite_cond = rewrite_cond
+            self._get_default_value = get_default_value
+            self._update_func = update_func
+            self._rewrite_cond = rewrite_cond
 
         def set(self, node, value):
-            setattr(node, self.name, value)
+            setattr(node, self._name, value)
 
         def get(self, node):
-            return getattr(node, self.name, self.get_default_value)
+            return getattr(node, self._name, self._get_default_value)
 
         def do_rewrite(self, node):
-            return self.rewrite_cond(self.get(node))
+            return self._rewrite_cond(self.get(node))
 
         def update(self, *values):
-            return self.update_func(*values)
+            return self._update_func(*values)
 
     class InfoCollector(ast.NodeTransformer):
         def __init__(self, info_helper, funcs=[]):
             super(InfoCollector, self).__init__()
-            self.info_helper = info_helper
-            self.funcs = {func.__name__: func for func in funcs}
+            self._info_helper = info_helper
+            self._funcs = {func.__name__: func for func in funcs}
 
-        def collect_info(self, node, attrs=[], funcs=[]):
+        def _collect_info(self, node, attrs=[], funcs=[]):
             self.generic_visit(node)
-            info = self.info_helper.init_value
+            info = self._info_helper.init_value
             for name in attrs:
                 child = getattr(node, name)
                 if isinstance(child, list):
                     for e in child:
-                        info = self.info_helper.update(info,
-                                                       self.info_helper.get(e))
+                        info = self._info_helper.update(
+                            info, self._info_helper.get(e))
                 else:
-                    info = self.info_helper.update(info,
-                                                   self.info_helper.get(child))
+                    info = self._info_helper.update(
+                        info, self._info_helper.get(child))
 
             for name in funcs:
-                info = self.info_helper.update(info, self.funcs[name](node))
+                info = self._info_helper.update(info, self._funcs[name](node))
 
-            self.info_helper.set(node, info)
+            self._info_helper.set(node, info)
             return node
 
         def visit_FunctionDef(self, node):
@@ -75,34 +82,34 @@ def segment_reform(function_ast, print_new_segment):
             return node
 
         def visit_Assign(self, node):
-            return self.collect_info(node, attrs=['value'])
+            return self._collect_info(node, attrs=['value'])
 
         def visit_Call(self, node):
-            return self.collect_info(
+            return self._collect_info(
                 node, attrs=['args'], funcs=['is_atomic_func'])
 
         def visit_BinOp(self, node):
-            return self.collect_info(
+            return self._collect_info(
                 node, attrs=['left', 'right'], funcs=['is_ndarray_type'])
 
         def visit_Name(self, node):
-            return self.collect_info(node, funcs=['is_ndarray_type'])
+            return self._collect_info(node, funcs=['is_ndarray_type'])
 
         def visit_Num(self, node):
-            return self.collect_info(node)
+            return self._collect_info(node)
 
         def visit_Attribute(self, node):
             # Treat an attribute expr as a whole
-            return self.collect_info(node, funcs=['is_ndarray_type'])
+            return self._collect_info(node, funcs=['is_ndarray_type'])
 
         def visit_Subscript(self, node):
             # Treat a subscript expr as a whole
-            return self.collect_info(node, funcs=['is_ndarray_type'])
+            return self._collect_info(node, funcs=['is_ndarray_type'])
 
     class NodeRewriter(ast.NodeTransformer):
         def __init__(self, info_helper):
             super(NodeRewriter, self).__init__()
-            self.info_helper = info_helper
+            self._info_helper = info_helper
 
         def fuse_consecutive_assignments(self, stmts):
             def make_ast_call(func_name, ins, outs):
@@ -110,16 +117,13 @@ def segment_reform(function_ast, print_new_segment):
                     targets=[
                         ast.Tuple(
                             elts=[
-                                ast.Name(
-                                    id=e, ctx=ast.Store()) for e in outs
+                                ast.Name(id=e, ctx=ast.Store()) for e in outs
                             ],
                             ctx=ast.Store())
                     ],
                     value=ast.Call(
-                        func=ast.Name(
-                            id=func_name, ctx=ast.Load()),
-                        args=[ast.Name(
-                            id=e, ctx=ast.Load()) for e in ins],
+                        func=ast.Name(id=func_name, ctx=ast.Load()),
+                        args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                         keywords=[]))
 
             def make_ast_function_def(func_name, stmts, ins, outs):
@@ -133,10 +137,10 @@ def segment_reform(function_ast, print_new_segment):
                         kwarg=None,
                         defaults=[]),
                     body=[
-                        *stmts, ast.Return(value=ast.Tuple(
+                        *stmts,
+                        ast.Return(value=ast.Tuple(
                             elts=[
-                                ast.Name(
-                                    id=e, ctx=ast.Load()) for e in outs
+                                ast.Name(id=e, ctx=ast.Load()) for e in outs
                             ],
                             ctx=ast.Load()))
                     ],
@@ -166,7 +170,7 @@ def segment_reform(function_ast, print_new_segment):
                 pos, leng = (0, 0)
                 while pos < len(stmts):
                     if isinstance(stmts[pos],
-                                  ast.Assign) and self.info_helper.do_rewrite(
+                                  ast.Assign) and self._info_helper.do_rewrite(
                                       stmts[pos]):
                         leng += 1
                     else:
@@ -350,9 +354,9 @@ def segment(function_ast, print_new_segment):
                 kwarg=None,
                 defaults=[]),
             body=[
-                *statements, ast.Return(value=ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Load()) for e in outs],
+                *statements,
+                ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(id=e, ctx=ast.Load()) for e in outs],
                     ctx=ast.Load()))
             ],
             decorator_list=[],
@@ -362,15 +366,12 @@ def segment(function_ast, print_new_segment):
         return ast.Assign(
             targets=[
                 ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Store()) for e in outs],
+                    elts=[ast.Name(id=e, ctx=ast.Store()) for e in outs],
                     ctx=ast.Store())
             ],
             value=ast.Call(
-                func=ast.Name(
-                    id=func_name, ctx=ast.Load()),
-                args=[ast.Name(
-                    id=e, ctx=ast.Load()) for e in ins],
+                func=ast.Name(id=func_name, ctx=ast.Load()),
+                args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                 keywords=[]))
 
     new_funcdefs = []
