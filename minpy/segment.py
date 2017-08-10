@@ -560,6 +560,7 @@ def infer_inputs_and_outputs_given_nodes(nodes):
         # attributes/subscripts as a whole. for example,
         # `nd.random.normal` would be treated as one single input,
         # same for `array[2][3][4]`.
+        # XCR(yutian): handled in reformed segment
         elif isinstance(expr, ast.Attribute):
             # Assumption: left operand is a Name
             assert isinstance(expr.expr, ast.Name)
