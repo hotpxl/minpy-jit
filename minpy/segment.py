@@ -14,17 +14,26 @@ from . import core
 _segment_cnt = 0
 
 
+# CR(haoran): i feel it is confusing with both `__dict__` and `getattr`, `setattr`
+# let's use `get/setattr` all the way and avoid `__dict__` directly
 def segment_reform(function_ast, print_new_segment):
     def set_rewrite_info(node, name, value):
+        # CR(haoran): why setdefault?
+        # can we just do `setattr(node, name, value)`?
         node.__dict__.setdefault(name, value)
 
     def get_rewrite_info(node, name, default_value):
+        # CR(haoran): same here, use getattr uniformly.
+        # `getattr(node, name, default_value)`
         return node.__dict__.get(name, default_value)
 
     def is_ndarray_type(node):
         return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
 
     def is_atomic_func(node):
+        # CR(haoran): ditto
+        # 1. `__dict__` always exists
+        # 2. nd.__dict__.values() might be a performance issue (everything else is O(1) and this is O(n))
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
             return node.ref.__dict__.get(
                 '__minpy_atomic', False) or node.ref in nd.__dict__.values()
@@ -41,6 +50,7 @@ def segment_reform(function_ast, print_new_segment):
                     for e in child:
                         do_fuse &= get_rewrite_info(e, 'fuse', False)
                 else:
+                    # CR(haoran): &= ?
                     do_fuse = get_rewrite_info(child, 'fuse', False)
 
             for func in funcs:
@@ -98,6 +108,8 @@ def segment_reform(function_ast, print_new_segment):
                         args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                         keywords=[]))
 
+            # CR(haoran): https://google.github.io/styleguide/pyguide.html?showone=Naming#Naming
+            # make_ast_function_def
             def make_ast_functionDef(func_name, stmts, ins, outs):
                 return ast.FunctionDef(
                     name=func_name,
@@ -160,7 +172,7 @@ def segment_reform(function_ast, print_new_segment):
                 del stmts[st + 1:st + leng]
 
         def visit_FunctionDef(self, node):
-            if not get_rewrite_info(node, 'jitFunc', False):
+            if not get_rewrite_info(node, 'jit_func', False):
                 return node
             self.generic_visit(node)
             self.fuse_consecutive_assignments(node.body)
@@ -177,7 +189,7 @@ def segment_reform(function_ast, print_new_segment):
 
     rewriter = NodeRewriter()
     new_funcdefs = []
-    set_rewrite_info(function_ast.body[0], 'jitFunc', True)
+    set_rewrite_info(function_ast.body[0], 'jit_func', True)
     rewriter.generic_visit(function_ast)
 
     function_ast.body[0].body[0:0] = new_funcdefs
