@@ -5,4 +5,4 @@ from __future__ import division
 from __future__ import print_function
 from .jit import jit
 from .decorators import atomic
-from .segment import segment, test_segment
+from .segment import segment, segment_reform

@@ -89,16 +89,13 @@ def segment_reform(function_ast, print_new_segment):
                     targets=[
                         ast.Tuple(
                             elts=[
-                                ast.Name(
-                                    id=e, ctx=ast.Store()) for e in outs
+                                ast.Name(id=e, ctx=ast.Store()) for e in outs
                             ],
                             ctx=ast.Store())
                     ],
                     value=ast.Call(
-                        func=ast.Name(
-                            id=func_name, ctx=ast.Load()),
-                        args=[ast.Name(
-                            id=e, ctx=ast.Load()) for e in ins],
+                        func=ast.Name(id=func_name, ctx=ast.Load()),
+                        args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                         keywords=[]))
 
             def make_ast_functionDef(func_name, stmts, ins, outs):
@@ -112,10 +109,10 @@ def segment_reform(function_ast, print_new_segment):
                         kwarg=None,
                         defaults=[]),
                     body=[
-                        *stmts, ast.Return(value=ast.Tuple(
+                        *stmts,
+                        ast.Return(value=ast.Tuple(
                             elts=[
-                                ast.Name(
-                                    id=e, ctx=ast.Load()) for e in outs
+                                ast.Name(id=e, ctx=ast.Load()) for e in outs
                             ],
                             ctx=ast.Load()))
                     ],
@@ -307,9 +304,9 @@ def segment(function_ast, print_new_segment):
                 kwarg=None,
                 defaults=[]),
             body=[
-                *statements, ast.Return(value=ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Load()) for e in outs],
+                *statements,
+                ast.Return(value=ast.Tuple(
+                    elts=[ast.Name(id=e, ctx=ast.Load()) for e in outs],
                     ctx=ast.Load()))
             ],
             decorator_list=[],
@@ -319,15 +316,12 @@ def segment(function_ast, print_new_segment):
         return ast.Assign(
             targets=[
                 ast.Tuple(
-                    elts=[ast.Name(
-                        id=e, ctx=ast.Store()) for e in outs],
+                    elts=[ast.Name(id=e, ctx=ast.Store()) for e in outs],
                     ctx=ast.Store())
             ],
             value=ast.Call(
-                func=ast.Name(
-                    id=func_name, ctx=ast.Load()),
-                args=[ast.Name(
-                    id=e, ctx=ast.Load()) for e in ins],
+                func=ast.Name(id=func_name, ctx=ast.Load()),
+                args=[ast.Name(id=e, ctx=ast.Load()) for e in ins],
                 keywords=[]))
 
     new_funcdefs = []

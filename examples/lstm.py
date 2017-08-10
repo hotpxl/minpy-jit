@@ -63,6 +63,8 @@ def foo(h, c, patch, Wxi, Wxf, Wxo, Wxg, bxi, bxf, bxo, bxg, Whi, Whf, Who,
         Whg, bhi, bhf, bho, bhg):
     i = sigmoid(linear(patch, Wxi, bxi) + linear(h, Whi, bhi))
     f = sigmoid(linear(patch, Wxf, bxf) + linear(h, Whf, bhf))
+    # CR(haoran): adding the following line will create a new segment, is this a bug?
+    sigmoid(f)
     o = sigmoid(linear(patch, Wxo, bxo) + linear(h, Who, bho))
     g = nd.tanh(linear(patch, Wxg, bxg) + linear(h, Whg, bhg))
     c = f * c + i * g
