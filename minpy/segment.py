@@ -20,6 +20,11 @@ _ndarray_funcs = nd.__dict__.values()
 
 
 def segment_reform(function_ast, print_new_segment):
+    # CR(haoran): I feel this class definition is largly
+    # unnecessary. The functionality is quite specific and doesn't
+    # offer much generalization. Besides, try use `map` and `reduce`
+    # to generalize on functions instead of data structure, i.e. try
+    # to write in a functional fashion.
     class InfoHelper():
         def __init__(self,
                      name,
@@ -210,6 +215,7 @@ def segment_reform(function_ast, print_new_segment):
         # 2. nd.__dict__.values() might be a performance issue (everything else is O(1) and this is O(n))
         # XCR(yutian): 1. i think builtin_function doesn't have '__dict__' attribute, e.g. print
         # 2. how about this:
+        # XCR(haoran): lgtm. ps, `global _ndarray_funcs` is not necessary
         global _ndarray_funcs
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
             return node.ref.__dict__.get('__minpy_atomic',
@@ -331,9 +337,6 @@ def segment(function_ast, print_new_segment):
                 type(node).__name__))
 
     def is_ndarray_type(node):
-        # CR(haoran): why FunctionType is ndarray type?
-        # use `issubclass`
-        # XCR(yutian): The previous commit is WIP. See more in #L237
         return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
 
     def is_atomic_func(node):
@@ -446,15 +449,6 @@ def segment(function_ast, print_new_segment):
 
         atom_signs = {}
         fuse_entire_node = True
-        # CR(haoran): use iter_child_nodes so you don't have to check
-        # whether it's a list
-        # (https://github.com/python/cpython/blob/3.6/Lib/ast.py#L178)
-        # XCR(yutian): Yes, I understand the benefit of iter_child_nodes
-        # Actually, the code below is copied from its definition
-        # The initial purpose of writing in the list-checking way is to expose the list information,
-        # i.e. to know which nodes belong to the same list in order to fuse them
-        # Under the current fusing rules, iter_child_nodes is actually sufficient.
-        # I suggest we keep this and change to iter_child_nodes later if above observation still holds
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
                 # ad-hoc: skip func attr of ast.Call,
@@ -600,11 +594,6 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             return collect_names_given_exprs(expr.operand)
         elif isinstance(expr, ast.Tuple):
             return collect_names_given_exprs(expr.elts)
-        # CR(haoran): it would be more convenient to handle nested
-        # attributes/subscripts as a whole. for example,
-        # `nd.random.normal` would be treated as one single input,
-        # same for `array[2][3][4]`.
-        # XCR(yutian): handled in reformed segment
         elif isinstance(expr, ast.Attribute):
             # Assumption: left operand is a Name
             assert isinstance(expr.expr, ast.Name)
