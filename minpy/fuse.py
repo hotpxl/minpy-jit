@@ -10,6 +10,12 @@ import mxnet
 _ndarray_funcs = vars(mxnet.nd).values()
 
 
+# the thing is, every single rule is (approximately) one visit_**
+# method here. but adding rules sohuld be very careful! not thinking
+# about this formally will result in a UNSOUND fuse
+# and also, here we are dealing only with expressions. we deal with
+# statements later
+# formal method is noted down here: https://goo.gl/B691Py
 class NodeTransformer(ast.NodeTransformer):
     def visit(self, node):
         # Always recurse and then call corresponding method.
