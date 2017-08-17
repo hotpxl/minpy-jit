@@ -44,6 +44,18 @@ def segment_reform(function_ast, print_new_segment):
     # COMPLETE) version. you might go ahead working on the codegen
     # part with minjie in the mean time. at least the code runs
     # smoothly now
+    # XCR(yutian): the last part of my comment "for collecting some
+    # information/doing computationsm, which relies on its children's
+    # result" -> this is the purpose for infohelper, which is originally
+    # written within visit_Node function.
+    # Its genericness/versatility is heavily related to the type-tracing
+    # result.
+    # And you're right that it seems poor given current type info.
+    # We would have better judgement on that once your changes are done.
+    # If still poor, I would remove it.
+    # For the point of "not the rules itself", I think it's possible
+    # to add more rules by making classes like 'NodeRewriterRuleA',
+    # 'NodeRewriterRuleB'.
     class InfoHelper():
         def __init__(self,
                      name,
@@ -136,6 +148,14 @@ def segment_reform(function_ast, print_new_segment):
             # XCR(haoran): this is incorrect either! The correct
             # condition is: either or both sides is NDArray. Not
             # including the case where both sides are numbers
+            # XCR(yutian): Take a = b + (c + d), where b is NDArray
+            # and c,d are numeric.
+            # For Binary Op, we might allow both-numeric-value case
+            # and add the NDArray checking at the very end, e.g.
+            # the type of right operand of assignment operation
+            # in this case.
+            # This final checkingis missing at present. I'll work
+            # on this.
             return self._collect_info(
                 node, attrs=['left', 'right'], funcs=['is_ndarray_or_numeric'])
 
