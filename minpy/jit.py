@@ -8,6 +8,7 @@ import functools
 
 from . import core
 from . import segment
+from . import fuse
 
 
 @core.return_on_reentrance
@@ -34,9 +35,11 @@ def jit(f):
                 closure_arguments)
 
             ret = new_function(*args, **kwargs)
+            function_ast = fuse.fuse(function_ast)
             print(core.pretty_print(function_ast, include_attributes=False))
-            function_ast = segment.segment_reform(function_ast, True)
-            print(core.pretty_print(function_ast, include_attributes=False))
+            print(core.tree_print(function_ast))
+            #function_ast = segment.segment_reform(function_ast, True)
+            #print(core.pretty_print(function_ast, include_attributes=False))
             return ret
 
     return wrapper
