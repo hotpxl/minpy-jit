@@ -14,11 +14,6 @@ from . import core
 _segment_cnt = 0
 _ndarray_funcs = nd.__dict__.values()
 
-# CR(haoran): I use yapf 0.16.3 with Python 3.6.2. My yapf is the
-# latest version. Are you using the same version?  I see a lot of
-# reformatting back and forth. Might be yapf issue.
-# XCR(yutian): I was using an older version, just updated. We're using the same version now
-
 
 def segment_reform(function_ast, print_new_segment):
     # CR(haoran): I feel this class definition is largly
@@ -26,10 +21,29 @@ def segment_reform(function_ast, print_new_segment):
     # offer much generalization. Besides, try use `map` and `reduce`
     # to generalize on functions instead of data structure, i.e. try
     # to write in a functional fashion.
-    # XCR(yutian): The main reason to abstract this class out is I think it may be helpful
-    # when the program needs to walk through the ast nodes for collecting some information/doing computationsm,
-    # which relies on its children's result.
-    # I think this scenario may be common.
+    # XCR(yutian): The main reason to abstract this class out is I
+    # think it may be helpful when the program needs to walk through
+    # the ast nodes for collecting some information/doing
+    # computationsm, which relies on its children's result.  I think
+    # this scenario may be common.
+    # XCR(haoran): "it may be helpful when the program needs to walk
+    # through the ast nodes" -> that's why we have ast.NodeVisitor and
+    # ast.NodeTransformer
+    # if you look at it more closely, you will find that it is not at
+    # all generic. InfoCollector's visit functions are not uniform;
+    # they depend on the exact type of node that is being visited. and
+    # this logic is particular to segmentation logic. a good rule of
+    # thumb is DRY (take it with a grain of salt though)
+    # this is why i propose the separation of rules (when can a node
+    # be fused)
+    # WHILE you are separating the logic of aggregation of rules but
+    # not the rules itself
+    # i think it also deals with problems mentioned below (ln 120 and
+    # 133). i'm still working on it. i'm trying to work from your
+    # existing rules and see if i can come up with a SOUND (but not
+    # COMPLETE) version. you might go ahead working on the codegen
+    # part with minjie in the mean time. at least the code runs
+    # smoothly now
     class InfoHelper():
         def __init__(self,
                      name,
@@ -37,10 +51,6 @@ def segment_reform(function_ast, print_new_segment):
                      get_default_value,
                      update_func=None,
                      rewrite_cond=None):
-            # CR(haoran): https://google.github.io/styleguide/pyguide.html?showone=Naming#Naming
-            # prepend underscore to private instance variables.
-            # just FYI. I've done it already
-            # XCR(yutian): oh, my fault. thanks for that.
             self._name = name
             self.init_value = init_value
             self._get_default_value = get_default_value
@@ -71,27 +81,16 @@ def segment_reform(function_ast, print_new_segment):
             for name in attrs:
                 child = getattr(node, name)
                 if isinstance(child, list):
-                    info = reduce(self._info_helper.update, [info] + list(map(self._info_helper.get, child)))
-                    # CR(haoran): the separation of & logic
-                    # operation is unnecessary here. and it makes
-                    # the code more confusing.
-                    # also, instead of calling this a general
-                    # infocollector, might as well be a
-                    # specialized function just for jit. try to
-                    # generalize on functions instead of data
-                    # structures (data structures are hard to
-                    # reuse)
-                    # why not try use map and reduce and
-                    # everything will be much clearer?
-                    # XCR(yutian): the first point is answered above.
-                    # map, reduce are adopted.
-
+                    info = reduce(
+                        self._info_helper.update,
+                        [info] + list(map(self._info_helper.get, child)))
                 else:
                     info = self._info_helper.update(
                         info, self._info_helper.get(child))
 
-
-            info = reduce(self._info_helper.update, [info] + list(map(lambda name:self._funcs[name](node), funcs)))
+            info = reduce(
+                self._info_helper.update, [info] +
+                list(map(lambda name: self._funcs[name](node), funcs)))
 
             self._info_helper.set(node, info)
             return node
@@ -134,6 +133,9 @@ def segment_reform(function_ast, print_new_segment):
             # CR(haoran): incorrect? numpy.ndarray + integer_literal
             # is also a valid fusable operation
             # XCR(yutian): fixed
+            # XCR(haoran): this is incorrect either! The correct
+            # condition is: either or both sides is NDArray. Not
+            # including the case where both sides are numbers
             return self._collect_info(
                 node, attrs=['left', 'right'], funcs=['is_ndarray_or_numeric'])
 
@@ -247,7 +249,8 @@ def segment_reform(function_ast, print_new_segment):
             return node
 
     def is_ndarray_or_numeric(node):
-        return hasattr(node, 'type') and issubclass(node.type, (nd.NDArray, int, float))
+        return hasattr(node, 'type') and issubclass(node.type,
+                                                    (nd.NDArray, int, float))
 
     def is_atomic_func(node):
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
