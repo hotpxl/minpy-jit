@@ -58,6 +58,26 @@ def segment_reform(function_ast, print_new_segment):
     # 'NodeRewriterRuleB'.
     # I agree the elegant solution is to support incremental fusion.
     # Will think about that.
+    # XCR(haoran): it's genericness is NOT related to type-tracing
+    # results. this is why: the segment function consists of two
+    # parts. 1. marking expressions (and subexpressions) as
+    # fusable. 2. actually fuse statements together mind 1 only
+    # involves expressions and 2 only statements
+    # part 2 is your "fusing consecutive assignments" currently.
+    # now for part 1, we have to investigate expressions. there are
+    # two steps in this: determine the type of expr(call or attr or
+    # binop), and then do stuff (if it's a call then check for
+    # atomicity if it's binop then blablabla). two steps together is
+    # called a rule. there are many rules: BinOp says either one is
+    # ndarary, call says it must be atomic and so on. (i'm approaching
+    # the problem with this dimension).
+    # the problem is InfoHelper is doing step 2 and InfoCollector is
+    # doing step 1. that's why i'm saying you are separating logic at
+    # the wrong place/dimension. as a result, you still have to write
+    # visit_BLABLA for every expression in InfoCollector, but this is
+    # already done by ast.NodeVisitor
+    # anyways i find this discussion very helpful. none of this
+    # thinking was formed before
     class InfoHelper():
         def __init__(self,
                      name,
