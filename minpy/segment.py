@@ -17,6 +17,7 @@ _ndarray_funcs = nd.__dict__.values()
 # CR(haoran): I use yapf 0.16.3 with Python 3.6.2. My yapf is the
 # latest version. Are you using the same version?  I see a lot of
 # reformatting back and forth. Might be yapf issue.
+# XCR(yutian): I was using an older version, just updated. We're using the same version now
 
 
 def segment_reform(function_ast, print_new_segment):
@@ -25,6 +26,10 @@ def segment_reform(function_ast, print_new_segment):
     # offer much generalization. Besides, try use `map` and `reduce`
     # to generalize on functions instead of data structure, i.e. try
     # to write in a functional fashion.
+    # XCR(yutian): The main reason to abstract this class out is I think it may be helpful
+    # when the program needs to walk through the ast nodes for collecting some information/doing computationsm,
+    # which relies on its children's result.
+    # I think this scenario may be common.
     class InfoHelper():
         def __init__(self,
                      name,
@@ -35,6 +40,7 @@ def segment_reform(function_ast, print_new_segment):
             # CR(haoran): https://google.github.io/styleguide/pyguide.html?showone=Naming#Naming
             # prepend underscore to private instance variables.
             # just FYI. I've done it already
+            # XCR(yutian): oh, my fault. thanks for that.
             self._name = name
             self.init_value = init_value
             self._get_default_value = get_default_value
@@ -65,26 +71,27 @@ def segment_reform(function_ast, print_new_segment):
             for name in attrs:
                 child = getattr(node, name)
                 if isinstance(child, list):
-                    for e in child:
-                        # CR(haoran): the separation of & logic
-                        # operation is unnecessary here. and it makes
-                        # the code more confusing.
-                        # also, instead of calling this a general
-                        # infocollector, might as well be a
-                        # specialized function just for jit. try to
-                        # generalize on functions instead of data
-                        # structures (data structures are hard to
-                        # reuse)
-                        # why not try use map and reduce and
-                        # everything will be much clearer?
-                        info = self._info_helper.update(
-                            info, self._info_helper.get(e))
+                    info = reduce(self._info_helper.update, [info] + list(map(self._info_helper.get, child)))
+                    # CR(haoran): the separation of & logic
+                    # operation is unnecessary here. and it makes
+                    # the code more confusing.
+                    # also, instead of calling this a general
+                    # infocollector, might as well be a
+                    # specialized function just for jit. try to
+                    # generalize on functions instead of data
+                    # structures (data structures are hard to
+                    # reuse)
+                    # why not try use map and reduce and
+                    # everything will be much clearer?
+                    # XCR(yutian): the first point is answered above.
+                    # map, reduce are adopted.
+
                 else:
                     info = self._info_helper.update(
                         info, self._info_helper.get(child))
 
-            for name in funcs:
-                info = self._info_helper.update(info, self._funcs[name](node))
+
+            info = reduce(self._info_helper.update, [info] + list(map(lambda name:self._funcs[name](node), funcs)))
 
             self._info_helper.set(node, info)
             return node
@@ -108,28 +115,41 @@ def segment_reform(function_ast, print_new_segment):
             # some_flag else 2, ...)` from fusing
             # I don't have a solution but i feel there is a simple
             # solution
+            #
+            # XCR(yutian): It doesn't check the input list yet.
+            #
+            # I don't have a simple solution yet.
+            #
+            # List several questions come to my mind:
+            # - how to get the elements, and their types, of dict/list?
+            # - how to figure which elements of the list/dict
+            # are created inside the function?
+            # - let's assume we could get the function definition,
+            # how to handle the recursive function call?
+            # - how to do above things in a simple way?
             return self._collect_info(
                 node, attrs=['args'], funcs=['is_atomic_func'])
 
         def visit_BinOp(self, node):
             # CR(haoran): incorrect? numpy.ndarray + integer_literal
             # is also a valid fusable operation
+            # XCR(yutian): fixed
             return self._collect_info(
-                node, attrs=['left', 'right'], funcs=['is_ndarray_type'])
+                node, attrs=['left', 'right'], funcs=['is_ndarray_or_numeric'])
 
         def visit_Name(self, node):
-            return self._collect_info(node, funcs=['is_ndarray_type'])
+            return self._collect_info(node, funcs=['is_ndarray_or_numeric'])
 
         def visit_Num(self, node):
             return self._collect_info(node)
 
         def visit_Attribute(self, node):
             # Treat an attribute expr as a whole
-            return self._collect_info(node, funcs=['is_ndarray_type'])
+            return self._collect_info(node, funcs=['is_ndarray_or_numeric'])
 
         def visit_Subscript(self, node):
             # Treat a subscript expr as a whole
-            return self._collect_info(node, funcs=['is_ndarray_type'])
+            return self._collect_info(node, funcs=['is_ndarray_or_numeric'])
 
     class NodeRewriter(ast.NodeTransformer):
         def __init__(self, info_helper):
@@ -226,17 +246,10 @@ def segment_reform(function_ast, print_new_segment):
             self.fuse_consecutive_assignments(node.orelse)
             return node
 
-    def is_ndarray_type(node):
-        return hasattr(node, 'type') and issubclass(node.type, nd.NDArray)
+    def is_ndarray_or_numeric(node):
+        return hasattr(node, 'type') and issubclass(node.type, (nd.NDArray, int, float))
 
     def is_atomic_func(node):
-        # CR(haoran): ditto
-        # 1. `__dict__` always exists
-        # 2. nd.__dict__.values() might be a performance issue (everything else is O(1) and this is O(n))
-        # XCR(yutian): 1. i think builtin_function doesn't have '__dict__' attribute, e.g. print
-        # 2. how about this:
-        # XCR(haoran): lgtm. ps, `global _ndarray_funcs` is not necessary
-        global _ndarray_funcs
         if hasattr(node, 'ref') and hasattr(node.ref, '__dict__'):
             return node.ref.__dict__.get('__minpy_atomic',
                                          False) or node.ref in _ndarray_funcs
@@ -266,7 +279,7 @@ def segment_reform(function_ast, print_new_segment):
     # itself is already using visitor pattern so should largely handle
     # the plumbing
     collector = InfoCollector(
-        fuse_helper, funcs=[is_ndarray_type, is_atomic_func])
+        fuse_helper, funcs=[is_ndarray_or_numeric, is_atomic_func])
     collector.generic_visit(function_ast)
 
     rewriter = NodeRewriter(fuse_helper)
