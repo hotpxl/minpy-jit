@@ -56,6 +56,8 @@ def segment_reform(function_ast, print_new_segment):
     # For the point of "not the rules itself", I think it's possible
     # to add more rules by making classes like 'NodeRewriterRuleA',
     # 'NodeRewriterRuleB'.
+    # I agree the elegant solution is to support incremental fusion.
+    # Will think about that.
     class InfoHelper():
         def __init__(self,
                      name,
@@ -118,6 +120,9 @@ def segment_reform(function_ast, print_new_segment):
         def visit_Assign(self, node):
             return self._collect_info(node, attrs=['value'])
 
+        def visit_Expr(self, node):
+            return self._collect_info(node, attrs=['value'])
+
         def visit_Call(self, node):
             # CR(haoran): atomic functions could also take lists or
             # dictionaries of ndarrays, or read-only objects. how do
@@ -178,7 +183,7 @@ def segment_reform(function_ast, print_new_segment):
             super(NodeRewriter, self).__init__()
             self._info_helper = info_helper
 
-        def fuse_consecutive_assignments(self, stmts):
+        def fuse_consecutive_assign_and_expr(self, stmts):
             def make_ast_call(func_name, ins, outs):
                 return ast.Assign(
                     targets=[
@@ -233,12 +238,12 @@ def segment_reform(function_ast, print_new_segment):
                 new_funcdefs.append(func_def)
                 return call_node
 
-            def get_consecutive_assignments(stmts):
+            def get_consecutive_assign_and_expr(stmts):
                 pos, leng = (0, 0)
                 while pos < len(stmts):
-                    if isinstance(stmts[pos],
-                                  ast.Assign) and self._info_helper.do_rewrite(
-                                      stmts[pos]):
+                    if (isinstance(stmts[pos], ast.Assign)
+                            or isinstance(stmts[pos], ast.Expr)
+                        ) and self._info_helper.do_rewrite(stmts[pos]):
                         leng += 1
                     else:
                         if leng > 0:
@@ -249,7 +254,7 @@ def segment_reform(function_ast, print_new_segment):
                     yield (pos - leng, leng)
 
             removed_num = 0
-            for (st, leng) in get_consecutive_assignments(stmts):
+            for (st, leng) in get_consecutive_assign_and_expr(stmts):
                 st -= removed_num
                 stmts[st] = fuse(stmts[st:st + leng])
                 removed_num += leng - 1
@@ -259,13 +264,13 @@ def segment_reform(function_ast, print_new_segment):
             if not jit_helper.get(node):
                 return node
             self.generic_visit(node)
-            self.fuse_consecutive_assignments(node.body)
+            self.fuse_consecutive_assign_and_expr(node.body)
             return node
 
         def visit_If(self, node):
             self.generic_visit(node)
-            self.fuse_consecutive_assignments(node.body)
-            self.fuse_consecutive_assignments(node.orelse)
+            self.fuse_consecutive_assign_and_expr(node.body)
+            self.fuse_consecutive_assign_and_expr(node.orelse)
             return node
 
     def is_ndarray_or_numeric(node):
@@ -582,6 +587,7 @@ def segment(function_ast, print_new_segment):
         # stmt is only used at top-level (since we are only considering one level of function definition)
         # write function that handle a couple of cases of stmt, and then write another one to
         # handle expr cases
+        # XCR(yutian): Missing visit_Expr caused the bug. Already fixed.
         for name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST) and (atom_signs[name]):
                 new_value = fuse([value])
@@ -633,7 +639,7 @@ def infer_inputs_and_outputs_given_nodes(nodes):
             # treat all the targets as outputs
             outs = collect_names_given_exprs(node.targets)
             return ins, outs
-        elif isinstance(node, ast.expr):
+        elif isinstance(node, (ast.expr, ast.Expr)):
             return collect_names_given_exprs(node), set([])
         else:
             raise TypeError(
@@ -662,6 +668,8 @@ def infer_inputs_and_outputs_given_nodes(nodes):
                                   expr)) if expr else set()
         elif isinstance(expr, ast.Call):
             return collect_names_given_exprs(expr.args)
+        elif isinstance(expr, ast.Expr):
+            return collect_names_given_exprs(expr.value)
         elif isinstance(expr, ast.BinOp):
             return collect_names_given_exprs([expr.left, expr.right])
         elif isinstance(expr, ast.UnaryOp):
