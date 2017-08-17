@@ -210,6 +210,8 @@ def tree_print(node, extra_attributes=['type', 'ref']):
             type(node).__name__ + '(' +
             ', '.join(map(lambda pair: '{}={}'.format(*pair), fields)) + ')'
         ]
+        if getattr(node, 'fuse', False):
+            ret[0] = '\x1b[32m' + ret[0] + '\x1b[0m'
         for c in childs[:-1]:
             for i, j in enumerate(c):
                 ret.append(('+--' if i == 0 else '|  ') + j)
