@@ -55,6 +55,10 @@ class NodeTransformer(ast.NodeTransformer):
                     node.fuse = True
         return node
 
+    def visit_Attribute(self, node):
+        # TODO(yutian) complex attributes are not handled
+        return node
+
     # statements below
     def visit_Assign(self, node):
         # TODO(yutian) multiple targets
