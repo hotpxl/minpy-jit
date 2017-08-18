@@ -31,6 +31,10 @@ class NodeTransformer(ast.NodeTransformer):
             node.fuse = True
         return node
 
+    def visit_Num(self, node):
+        node.fuse = True
+        return node
+
     def visit_BinOp(self, node):
         if self.get_fuse(node.left) and self.get_fuse(node.right):
             node.fuse = True
@@ -78,4 +82,6 @@ class NodeTransformer(ast.NodeTransformer):
 
 def fuse(function_ast):
     function_ast = NodeTransformer().visit(function_ast)
+    # get consec stmt blablabla
+    # get input/output blabla
     return function_ast
