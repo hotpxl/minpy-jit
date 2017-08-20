@@ -167,8 +167,9 @@ def add_function_tracing(function_ast):
 def pretty_print(node,
                  annotate_fields=True,
                  include_attributes=False,
-                 extra_attributes=['type', 'ref'],
-                 indent='  '):
+                 extra_attributes=['type', 'ref']):
+    indent = '  '
+
     def format(node, level=0):
         if isinstance(node, ast.AST):
             fields = [(i, format(j, level)) for i, j, in ast.iter_fields(node)]
@@ -210,6 +211,8 @@ def tree_print(node, extra_attributes=['type', 'ref']):
             type(node).__name__ + '(' +
             ', '.join(map(lambda pair: '{}={}'.format(*pair), fields)) + ')'
         ]
+        if getattr(node, 'static', False):
+            ret[0] += '*'
         if getattr(node, 'fuse', False):
             ret[0] = '\x1b[32m' + ret[0] + '\x1b[0m'
         for c in childs[:-1]:

@@ -10,13 +10,45 @@ import mxnet
 _ndarray_funcs = vars(mxnet.nd).values()
 
 
+class NodeTransformer(ast.NodeTransformer):
+    def visit(self, node):
+        # Always recurse and then call corresponding method.
+        method = 'visit_' + type(node).__name__
+        node = self.generic_visit(node)
+        return getattr(self, method, lambda x: x)(node)
+
+
+class StaticAnalyzer(NodeTransformer):
+    def visit_Name(self, node):
+        node.static = True
+        return node
+
+    def get_static(self, node):
+        return getattr(node, 'static', False)
+
+    def visit_Attribute(self, node):
+        if self.get_static(node.value):
+            node.static = True
+        return node
+
+    def visit_Subscript(self, node):
+        if self.get_static(node.value) and self.get_static(node.slice):
+            node.static = True
+        return node
+
+    def visit_Index(self, node):
+        if isinstance(node.value, ast.Num):
+            node.static = True
+        return node
+
+
 # the thing is, every single rule is (approximately) one visit_**
 # method here. but adding rules sohuld be very careful! not thinking
 # about this formally will result in a UNSOUND fuse
 # and also, here we are dealing only with expressions. we deal with
 # statements later
 # formal method is noted down here: https://goo.gl/B691Py
-class NodeTransformer(ast.NodeTransformer):
+class FuseAnalyzer(ast.NodeTransformer):
     def visit(self, node):
         # Always recurse and then call corresponding method.
         method = 'visit_' + type(node).__name__
@@ -59,10 +91,6 @@ class NodeTransformer(ast.NodeTransformer):
                     node.fuse = True
         return node
 
-    def visit_Attribute(self, node):
-        # TODO(yutian) complex attributes are not handled
-        return node
-
     # statements below
     def visit_Assign(self, node):
         # TODO(yutian) multiple targets
@@ -81,7 +109,8 @@ class NodeTransformer(ast.NodeTransformer):
 
 
 def fuse(function_ast):
-    function_ast = NodeTransformer().visit(function_ast)
+    function_ast = StaticAnalyzer().visit(function_ast)
+    function_ast = FuseAnalyzer().visit(function_ast)
     # get consec stmt blablabla
     # get input/output blabla
     return function_ast
