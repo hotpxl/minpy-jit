@@ -18,26 +18,35 @@ class NodeTransformer(ast.NodeTransformer):
         return getattr(self, method, lambda x: x)(node)
 
 
+def get_static(node):
+    return getattr(node, 'static', False)
+
+
+def get_fuse(node):
+    return getattr(node, 'fuse', False)
+
+
+def get_type(node):
+    return getattr(node, 'type', object)
+
+
 class StaticAnalyzer(NodeTransformer):
     def visit_Name(self, node):
         node.static = True
         return node
 
-    def get_static(self, node):
-        return getattr(node, 'static', False)
-
     def visit_Attribute(self, node):
-        if self.get_static(node.value):
+        if get_static(node.value):
             node.static = True
         return node
 
     def visit_Subscript(self, node):
-        if self.get_static(node.value) and self.get_static(node.slice):
+        if get_static(node.value) and get_static(node.slice):
             node.static = True
         return node
 
     def visit_Index(self, node):
-        if isinstance(node.value, ast.Num):
+        if isinstance(node.value, (ast.Num, ast.Str)):
             node.static = True
         return node
 
@@ -55,11 +64,8 @@ class FuseAnalyzer(ast.NodeTransformer):
         node = self.generic_visit(node)
         return getattr(self, method, lambda x: x)(node)
 
-    def get_fuse(self, node):
-        return getattr(node, 'fuse', False)
-
     def visit_Name(self, node):
-        if issubclass(getattr(node, 'type', object), mxnet.nd.NDArray):
+        if issubclass(get_type(node), mxnet.nd.NDArray):
             node.fuse = True
         return node
 
@@ -68,34 +74,39 @@ class FuseAnalyzer(ast.NodeTransformer):
         return node
 
     def visit_BinOp(self, node):
-        if self.get_fuse(node.left) and self.get_fuse(node.right):
+        if get_fuse(node.left) and get_fuse(node.right):
             node.fuse = True
         return node
 
     def visit_Tuple(self, node):
-        if isinstance(
-                node.ctx,
-                ast.Load) and all(map(lambda x: self.get_fuse(x), node.elts)):
+        if isinstance(node.ctx,
+                      ast.Load) and all(map(lambda x: get_fuse(x), node.elts)):
             node.fuse = True
         return node
 
     def visit_Call(self, node):
-        # what if the function itself is a complicated attribute? even
-        # dynamic?
-        # func_dict[function_name](arguments) like this?
-        # how to deal with this formally?
+        # We assumed that the functions do not change across calls. So
+        # we don't deal with the staticness of the function itself.
         if hasattr(node, 'ref'):
             if getattr(node.ref, '__minpy_atomic',
                        False) or node.ref in _ndarray_funcs:
-                if all(map(lambda x: self.get_fuse(x), node.args)):
+                if all(map(lambda x: get_fuse(x), node.args)):
                     node.fuse = True
         return node
 
-    # statements below
+    def visit_Subscript(self, node):
+        if isinstance(node.value, mxnet.nd.NDArray) and get_static(node.slice):
+            node.fuse = True
+        if get_static(node.value) and get_static(node.slice):
+            node.fuse = True
+        return node
+
+    # Statements below.
+
     def visit_Assign(self, node):
         # TODO(yutian) multiple targets
         if len(node.targets) == 1 and isinstance(
-                node.targets[0], ast.Name) and self.get_fuse(node.value):
+                node.targets[0], ast.Name) and get_fuse(node.value):
             node.fuse = True
         return node
 
@@ -103,7 +114,7 @@ class FuseAnalyzer(ast.NodeTransformer):
     # expressions before?  Because here it means a statement with a
     # single expression.
     def visit_Expr(self, node):
-        if self.get_fuse(node.value):
+        if get_fuse(node.value):
             node.fuse = True
         return node
 
